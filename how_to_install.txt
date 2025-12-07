@@ -1,0 +1,15 @@
+# Install my_utils from GitHub: Wont't work with uv pip, use conventional way
+
+uv add pip
+
+.venv\Scripts\activate
+
+pip install git+https://github.com/spacewagner/my_utils.git
+
+
+# Updates
+
+.venv\Scripts\activate
+
+# Force reinstall the package from GitHub
+pip install --upgrade --force-reinstall git+https://github.com/spacewagner/my_utils.git
