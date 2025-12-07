@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Transfer_Matrix_Method"
+version = "0.1.0"
+description = "This library allows TMM analysis of multilayer structures with a focus on VCSELs and DBRs."
+authors = [{name="Julian Wagener"}]
+requires-python = ">=3.8"
