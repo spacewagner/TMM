@@ -2,9 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from optics_utils import wavelength_to_frequency
-
-from structure_builder import (
+from TMM.structure_builder import (
     plot_structure,
     apply_AR_coating,
     build_VCSEL_structure,
@@ -13,13 +11,12 @@ from structure_builder import (
     build_DBR_structure,
     apply_etch,
 )
-from field_solver import (
+from TMM.field_solver import (
     calculate_optical_properties,
     calculate_electrical_field,
 )
 
-
-from analysis import (
+from TMM.analysis import (
     analyze_VCSEL,
     analyze_AR_coating,
     analyze_etching,
@@ -47,10 +44,10 @@ N_bottom = 20.5
 n_top_1 = AlAs
 n_top_2 = GaAs
 N_top = 20.0
-n_cavity = GaAs - 0.01j
+n_cavity = GaAs
 n_substrate = GaAs
 n_air = 1
-target_wavelength = 1310e-9
+target_wavelength = 940e-9
 
 VCSEL = build_VCSEL_structure(
     n_bottom_1,
@@ -66,14 +63,6 @@ VCSEL = build_VCSEL_structure(
 )
 
 plot_structure(VCSEL)
-
-wavelength_arr = wavelength_arr_adaptive_mesh(
-    target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength
-)
-
-wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
-    VCSEL, wavelength_arr
-)
 
 # %% Full Analysis
 
@@ -251,15 +240,3 @@ T_arr = np.linspace(300, 400, 5)
     cavity_resonance_arr,
     temperature_coefficent,
 ) = calculate_temperature_shift(VCSEL, target_wavelength, T_arr)
-
-
-
-# %%
-
-import time
-
-formatted_time = time.strftime("%Y%m%d_%H%M%S")
-filename = f"data_{formatted_time}.csv"
-print(filename)
-
-# %%

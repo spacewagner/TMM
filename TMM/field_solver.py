@@ -12,7 +12,7 @@ Chuang: Physics of Photonic Devices, Chapter 5.7 - 5.9 "Matrix Optics"
 import numpy as np
 import matplotlib.pyplot as plt
 
-from optics_utils import (
+from TMM.optics_utils import (
     transfer_matrix,
     calculate_reflectivity,
     calculate_transmission,
@@ -21,7 +21,7 @@ from optics_utils import (
     transfer_matrix_interface,
 )
 
-from structure_builder import plot_structure
+from TMM.structure_builder import plot_structure
 
 
 def calculate_optical_properties(structure, wavelength_arr, Plot=True):

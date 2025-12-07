@@ -19,12 +19,17 @@ analyze_VCSEL: full analysis of VCSEL structure with the methods above, this sho
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import colormaps
 import time
 
-from optics_utils import wavelength_to_frequency
-from field_solver import calculate_optical_properties, calculate_electrical_field
+from TMM.optics_utils import (
+    wavelength_to_frequency,
+    transfer_matrix,
+    calculate_reflectivity,
+)
+from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
 
-from structure_builder import (
+from TMM.structure_builder import (
     apply_AR_coating,
     VCSEL_temperature_correction,
     cavity_wavelength_temperature_correction,
@@ -34,9 +39,6 @@ from structure_builder import (
     build_DBR_structure,
     plot_structure,
 )
-
-from optics_utils import transfer_matrix, calculate_reflectivity
-from matplotlib import colormaps
 
 
 def analyze_AR_coating(structure, target_wavelength, n_coating=1.45, Plot=True):
@@ -104,7 +106,7 @@ def analyse_cavity_dip(
     cavity_resonance_reflectivity = min(r_arr_ROI)
     cavity_resonance_transmission = max(t_arr_ROI)
     cavity_gain = cavity_resonance_reflectivity + cavity_resonance_transmission - 1
-    if cavity_gain > 0:
+    if cavity_gain > 1e-9:
         idx_peak = np.argmax(r_arr_ROI)
     else:
         idx_peak = np.argmin(r_arr_ROI)
@@ -189,12 +191,12 @@ def calculate_temperature_shift(
     temperature_coefficent=0.061e-9,
     Plot=True,
     Print=True,
+    fine_range=5e-9,
 ):
 
     cavity_resonance_arr = []
     r_arr_arr = []
 
-    fine_range = 5e-9
     wavelength_arr_arr = []
 
     wavelength_T_theory_arr = cavity_wavelength_temperature_correction(
@@ -208,7 +210,11 @@ def calculate_temperature_shift(
         )
 
         wavelength_arr = wavelength_arr_adaptive_mesh(
-            wavelength_T - 100e-9, wavelength_T + 100e-9, wavelength_T, fine_range
+            wavelength_T - 100e-9,
+            wavelength_T + 100e-9,
+            wavelength_T,
+            fine_range,
+            mesh_size=0.1e-9,
         )
 
         wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
@@ -432,13 +438,13 @@ def analyze_VCSELs_DBRs(
         plt.show()
         plt.plot(wavelength_arr * 1e9, DBR_bottom_r_arr, label="Bottom DBR")
         plt.plot(wavelength_arr * 1e9, DBR_top_r_arr, label="Top DBR")
-        plt.xlabel("Wavelength~(nm)")
+        plt.xlabel("Wavelength (nm)")
         plt.ylabel("Reflectivity")
         plt.legend()
         plt.show()
         plt.plot(wavelength_arr * 1e9, DBR_bottom_phase_arr, label="Bottom DBR")
         plt.plot(wavelength_arr * 1e9, DBR_top_phase_arr, label="Top DBR")
-        plt.xlabel("Wavelength~(nm)")
+        plt.xlabel("Wavelength (nm)")
         plt.ylabel("Phase")
         plt.legend()
         plt.show()
@@ -446,13 +452,13 @@ def analyze_VCSELs_DBRs(
     if Print:
 
         print("=" * 60 + "\nDBR Analysis \n" + "=" * 60)
-        print(f"Results at target wavelength: {target_wavelength*1e9:.3f} nm")
+        print(f"Results at target wavelength: {target_wavelength*1e9:.3f}nm")
         print(f"Bottom DBR reflectivity: {DBR_bottom_r_at_target:.6f}")
         print(f"Top DBR reflectivity: {DBR_top_r_at_target:.6f}")
         print(f"Bottom DBR phase: {DBR_bottom_phase_at_target:.2f}")
         print(f"Top DBR phase: {DBR_top_phase_at_target:.2f}")
-        print(f"Bottom DBR stopband width: {DBR_bottom_stopband_width*1e9:.2f}")
-        print(f"Top DBR stopband width: {DBR_top_stopband_width*1e9:.2f}")
+        print(f"Bottom DBR stopband width: {DBR_bottom_stopband_width*1e9:.2f}nm")
+        print(f"Top DBR stopband width: {DBR_top_stopband_width*1e9:.2f}nm")
 
     return (
         DBR_bottom_r_arr,
@@ -623,7 +629,7 @@ def analyze_VCSEL(
         phase_arr / np.pi,
         color="tab:orange",
         label="Phase",
-        linestyle="--",
+        linestyle=":",
     )
     ax2.set_ylabel("Phase (rad)", color="tab:orange")
 
