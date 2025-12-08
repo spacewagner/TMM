@@ -182,10 +182,11 @@ def build_VCSEL_structure(
     n_substrate,
     n_air,
     target_wavelength,
+    N_cavity=1,
 ):
 
     # Quarter-wave thicknesses
-    d_cavity = target_wavelength / (2 * n_cavity.real)
+    d_cavity = target_wavelength / (2 * n_cavity.real) * N_cavity
 
     bottom_DBR = build_DBR_structure(
         n_bottom_1, n_bottom_2, N_bottom, target_wavelength, n_substrate=n_substrate

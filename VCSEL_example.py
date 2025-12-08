@@ -1,4 +1,12 @@
 # %%
+
+"""
+TODO
+
+calculate alpha_i and alpha_m by integrating mode over complex refractive index, repeat it in analyze_lifetime_tuning() for different mirror reflectivities.
+
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -60,6 +68,7 @@ VCSEL = build_VCSEL_structure(
     n_substrate,
     n_air,
     target_wavelength,
+    N_cavity=3,
 )
 
 plot_structure(VCSEL)
