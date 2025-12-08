@@ -8,3 +8,9 @@ version = "0.1.0"
 description = "This library allows TMM analysis of multilayer structures with a focus on VCSELs and DBRs."
 authors = [{name="Julian Wagener"}]
 requires-python = ">=3.8"
+dependencies = [
+    "matplotlib",
+    "pandas",
+    "scipy",
+    "numpy"
+]

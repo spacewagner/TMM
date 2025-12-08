@@ -5,6 +5,8 @@ TODO
 
 calculate alpha_i and alpha_m by integrating mode over complex refractive index, repeat it in analyze_lifetime_tuning() for different mirror reflectivities.
 
+Normalize Electrical field in plot
+
 """
 
 import numpy as np
