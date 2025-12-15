@@ -50,6 +50,7 @@ def transfer_matrix_layer(n: complex, d: float, wavelength: float) -> np.ndarray
     """
     k = 2 * np.pi * n / wavelength
     phi = k * d
+    # the notation -1j/+1j sets +- sign in extinction coefficient. Should be diag(-, +)
     return np.array([[np.exp(-1j * phi), 0.0], [0.0, np.exp(1j * phi)]], dtype=complex)
 
 
@@ -61,19 +62,21 @@ def transfer_matrix(structure, wavelength):
     """
     M_total = np.eye(2, dtype=complex)
 
-    for j in range(len(structure)):
-        n_j = structure.iloc[j]["n"]
-        d_j = structure.iloc[j]["d"]
+    # go backwards through structure
+    for i in range(len(structure) - 1, -1, -1):
+
+        n = structure.iloc[i]["n"]
+        d = structure.iloc[i]["d"]
 
         # Layer propagation
-        M_layer = transfer_matrix_layer(n_j, d_j, wavelength)
-        M_total = M_total @ M_layer
+        P = transfer_matrix_layer(n, d, wavelength)
+        M_total = P @ M_total
 
-        # Interface to next layer (if any)
-        if (j + 1) < len(structure):
-            n_next = structure.iloc[j + 1]["n"]
-            M_int = transfer_matrix_interface(n_j, n_next)
-            M_total = M_total @ M_int
+        # Interface to previous layer, from end to start position
+        if i > 0:
+            n_previous = structure.iloc[i - 1]["n"]
+            T_n_previous_n = transfer_matrix_interface(n_previous, n)
+            M_total = T_n_previous_n @ M_total
 
     return M_total
 
@@ -95,7 +98,8 @@ def calculate_transmission(M: np.ndarray, n_incident, n_transmission) -> float:
 
     """
     t_field = 1.0 / M[0, 0]
-    T = n_transmission.real / n_incident.real * np.abs(t_field) ** 2
+    impedance_factor = n_transmission.real / n_incident.real
+    T = impedance_factor * np.abs(t_field) ** 2
     return T
 
 

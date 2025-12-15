@@ -21,7 +21,7 @@ from TMM.optics_utils import (
     transfer_matrix_interface,
 )
 
-from TMM.structure_builder import plot_structure
+from TMM.structure_builder import plot_structure, interpolate_structure
 
 
 def calculate_optical_properties(structure, wavelength_arr, Plot=True):
@@ -97,109 +97,112 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
 
 
 def calculate_electrical_field(
-    structure, target_wavelength, position_resolution: int = 1000, Plot=True, Print=True
+    structure, target_wavelength, position_resolution: int = 100, Plot=True, Print=True
 ):
-    """
+    structure_interpolated = interpolate_structure(structure, position_resolution)
 
-    Take incident field (Amplitude_forward = 1, Amplitude_backward = 0)
-    Then follow the incident field while propagating through the structure, with transfer between interfaces and propagation through layers. Interpolation through layers allows space resolution of field.
+    M_total = np.eye(2, dtype=complex)
 
+    n_transmission = structure.iloc[-1]["n"]
 
-    """
+    Ef = 1.0 + 0.0j
+    Eb = 0.0 + 0.0j
+    vec = [Ef, Eb]
 
-    structure = structure.copy().reset_index(drop=True)
-    structure["position"] = structure["position"] - structure["position"].min()
+    vec_arr = []
+    n_field_arr = []
 
-    total_length = structure.iloc[-1]["position"] + structure.iloc[-1]["d"]
-    x_positions = np.linspace(0.0, total_length, position_resolution)
-
-    E_forward = 1.0 + 0j
-    E_backward = 0.0 + 0j
-
+    # n_previous referrs to n of the previous investigated layer, so the right next layer. From point of forwards propagating wave, it's always going from the current layer to the previous investigated layer T_n_n_previous
+    n_previous = structure.iloc[-1]["n"]
     field_positions = []
-    field_values = []
-    n_arr = []
 
-    for i in structure.index:
-        n = structure.loc[i, "n"]
-        layer_start = structure.loc[i, "position"]
-        d = structure.loc[i, "d"]
-        layer_end = layer_start + d
+    # go backwards through structure
+    for i in range(len(structure_interpolated) - 1, -1, -1):
 
-        if i == 0:
-            E_f = E_forward
-            E_b = E_backward
-        else:
-            n_prev = structure.loc[i - 1, "n"]
+        n = structure_interpolated.iloc[i]["n"]
+        d = structure_interpolated.iloc[i]["d"]
+        position_global = structure_interpolated.iloc[i]["position"]
 
-            M_int = transfer_matrix_interface(n_prev, n)
+        if n != n_previous:
+            T_n_n_previous = transfer_matrix_interface(n, n_previous)
+            vec = T_n_n_previous @ vec
+            n_previous = n
+            d = 0  # skip propagation in case of interface
 
-            vec = M_int @ np.array([E_forward, E_backward], dtype=complex)
-            E_f = vec[0]
-            E_b = vec[1]
+            M_total = T_n_n_previous @ M_total
 
-        in_layer = (x_positions >= layer_start) & (x_positions <= layer_end)
-        x_layer = x_positions[in_layer] - layer_start
+        P = transfer_matrix_layer(n, d, target_wavelength)
+        vec = P @ vec
 
-        for x_local in x_layer:
-            field_positions.append(layer_start + x_local)
+        M_total = P @ M_total
 
-            M_local = transfer_matrix_layer(n, x_local, target_wavelength)
-            vec_local = M_local @ np.array([E_f, E_b], dtype=complex)
-            E_f_local = vec_local[0]
-            E_b_local = vec_local[1]
-            E_total = E_f_local + E_b_local
-            field_values.append(E_total)
-            n_arr.append(n)
+        field_positions.append(position_global)
+        vec_arr.append(vec)
+        n_field_arr.append(n.real)
 
-        M_layer = transfer_matrix_layer(n, d, target_wavelength)
-        vec = M_layer @ np.array([E_f, E_b], dtype=complex)
-
-        E_forward = vec[0]
-        E_backward = vec[1]
-
-    field_positions = np.array(field_positions)
-    field_values = np.array(field_values)
-    n_arr = np.array(n_arr)
-
-    Gamma_z = 0.0
-    if (structure["name"] == "Cavity").any():
-        cavity_start = float(
-            structure.loc[structure["name"] == "Cavity", "position"].iloc[0]
-        )
-        cavity_d = float(structure.loc[structure["name"] == "Cavity", "d"].iloc[0])
-        cavity_stop = cavity_start + cavity_d
-
-        energy_full = np.sum(np.real(n_arr) * np.abs(field_values) ** 2)
-        mask_cav = (field_positions >= cavity_start) & (field_positions <= cavity_stop)
-        energy_cav = np.sum(
-            np.real(n_arr[mask_cav]) * np.abs(field_values[mask_cav]) ** 2
-        )
-        Gamma_z = float(energy_cav / energy_full) if energy_full != 0 else 0.0
+    # collect field components
+    field_values = np.array([vec[0] + vec[1] for vec in vec_arr])
+    field_forward = np.array([vec[0] for vec in vec_arr])
+    field_backward = np.array([vec[1] for vec in vec_arr])
 
     if Plot:
+        # calculate R, T from transfermatrix
+        n_incident = structure.iloc[0]["n"]
+        n_transmission = structure.iloc[-1]["n"]
+        M = transfer_matrix(structure, target_wavelength)
+        R = calculate_reflectivity(M)
+        T = calculate_transmission(M, n_incident, n_transmission)
+
+        # not exactly pointing, because no norming to vacuum impedance
+        S_forward = np.array(n_field_arr) * abs(field_forward) ** 2
+        S_backward = np.array(n_field_arr) * abs(field_backward) ** 2
+
+        # plotting
         plot_structure(structure)
-        ax1 = plt.gca()
-        ax2 = ax1.twinx()
-        ax2.plot(
-            field_positions * 1e6,
-            np.abs(field_values) ** 2,
-            label="$|E|^2$",
+        plt.plot(
+            np.array(field_positions) * 1e6,
+            abs(field_values) ** 2
+            / np.max(abs(field_values) ** 2)
+            * np.max(n_field_arr),
             color="tab:red",
+            label="$|E|^2$",
+        )
+        plt.legend()
+        plt.show()
+
+        # investigate forward and backward field for consistency
+        # plot needs to be normed to T and n_transmission, because initial condition was vec = [1, 0] but now should be [T/n, 0]
+        plt.plot(
+            field_positions, S_forward * T / n_transmission.real, label="S_forward"
+        )
+        plt.plot(
+            field_positions, S_backward * T / n_transmission.real, label="S_backward"
         )
 
-        # Get lines and labels from both axes
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
+        # check for energy conservation
+        plt.plot(
+            field_positions,
+            (S_forward - S_backward) * T / n_transmission.real,
+            label="S_forward - S_backward",
+        )
 
-        # Combine them
-        ax1.legend(lines1 + lines2, labels1 + labels2)
-        ax1.autoscale(enable=True, axis="x", tight=True)
-        ax1.autoscale(enable=True, axis="y", tight=True)
-        ax2.autoscale(enable=True, axis="y", tight=True)
+        # compare with results from M
+        plt.axhline(R, linestyle=":", label="R", color="tab:orange")
+        plt.axhline(T, linestyle=":", label="T", color="tab:blue")
+        plt.axhline(R + T, linestyle=":", label="R+T", color="black")
+        plt.plot(
+            field_positions,
+            n_field_arr / np.max(n_field_arr),
+            alpha=0.3,
+        )
+        plt.legend()
+        plt.show()
 
-    if Print:
-        print("=" * 60 + "\nElectrical Field Analysis \n" + "=" * 60)
-        print(f"Mode confinement Gamma_z: {Gamma_z:.4f}")
+        # phase of forward and backward wave
+        # plt.plot(field_positions, np.angle(field))
+        # plt.plot(field_positions, np.angle(field_forward))
+        # plt.plot(field_positions, np.angle(field_backward))
+        # plt.plot(structure_interpolated["position"], structure_interpolated["n"], alpha=0.3)
+        # plt.show()
 
-    return field_positions, field_values, Gamma_z
+    return field_positions, field_values, n_field_arr

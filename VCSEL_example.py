@@ -7,6 +7,10 @@ calculate alpha_i and alpha_m by integrating mode over complex refractive index,
 
 Normalize Electrical field in plot
 
+Calculate Mirror Losses
+
+Currently calculated from with incident from substrate. Should be reversed to match text book examples.
+
 """
 
 import numpy as np
@@ -34,6 +38,7 @@ from TMM.analysis import (
     analyse_cavity_dip,
     analyze_lifetime_tuning,
     analyze_VCSELs_DBRs,
+    analyze_electrical_field,
 )
 
 # %%
@@ -70,16 +75,20 @@ VCSEL = build_VCSEL_structure(
     n_substrate,
     n_air,
     target_wavelength,
-    N_cavity=3,
+    N_cavity=2,
 )
 
 plot_structure(VCSEL)
+
+field_positions, field_values, n_field_arr, Gamma_z = analyze_electrical_field(
+    VCSEL, target_wavelength
+)
 
 # %% Full Analysis
 
 analyze_VCSEL(VCSEL, target_wavelength)
 
-#####################################################################################################
+
 # %% Advanced functions
 
 """
@@ -196,7 +205,7 @@ This is how you investigate lifetime tuning on the VCSELs structure, default mat
     R_etch_tuning_range,
 ) = analyze_lifetime_tuning(VCSEL, target_wavelength)
 
-# %% Lifetime tuning in datail
+# %% Lifetime tuning in detail
 
 """
 

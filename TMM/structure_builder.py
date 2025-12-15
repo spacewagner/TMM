@@ -218,36 +218,36 @@ def build_VCSEL_structure(
 
 
 def plot_structure(structure, show_cavity_color: bool = True):
-    structure_real = structure.copy()
-    structure_real["n"] = np.real(structure_real["n"])  # only plot real part of n
+
+    structure_interpolated = interpolate_structure(structure)
+    structure_interpolated["n"] = np.real(
+        structure_interpolated["n"]
+    )  # only plot Re(n)
+
     plt.figure()
     plt.title("Layer structure (refractive index vs position)")
-    plt.step(
-        structure_real["position"] * 1e6,
-        structure_real["n"],
-        where="post",
+
+    plt.plot(
+        structure_interpolated["position"] * 1e6,
+        structure_interpolated["n"],
         label="n(z)",
     )
 
-    last_pos = structure_real.iloc[-1]["position"]
-    last_d = structure_real.iloc[-1]["d"]
-    plt.step(
-        np.array([last_pos, last_pos + last_d]) * 1e6,
-        [structure_real.iloc[-1]["n"], structure_real.iloc[-1]["n"]],
-        where="post",
-        color="tab:blue",
-    )
-
-    if (structure_real["name"] == "Cavity").any() and show_cavity_color:
+    if (structure_interpolated["name"] == "Cavity").any() and show_cavity_color:
         cavity_start = float(
-            structure_real.loc[structure_real["name"] == "Cavity", "position"].iloc[0]
+            structure_interpolated.loc[
+                structure_interpolated["name"] == "Cavity", "position"
+            ].iloc[0]
         )
-        cavity_d = float(
-            structure_real.loc[structure_real["name"] == "Cavity", "d"].iloc[0]
+        cavity_stop = float(
+            structure_interpolated.loc[
+                structure_interpolated["name"] == "Cavity", "position"
+            ].iloc[-1]
         )
-        cavity_stop = cavity_start + cavity_d
         n_cav = float(
-            structure_real.loc[structure_real["name"] == "Cavity", "n"].iloc[0]
+            structure_interpolated.loc[
+                structure_interpolated["name"] == "Cavity", "n"
+            ].iloc[0]
         )
         plt.fill_between(
             np.array([cavity_start, cavity_stop]) * 1e6,
@@ -330,3 +330,41 @@ def VCSEL_temperature_correction(
     VCSEL_T = build_VCSEL_structure(*VCSEL_structure, wavelength_T)
 
     return VCSEL_T, wavelength_T
+
+
+def interpolate_structure(structure, position_resolution: int = 100):
+
+    # reset index in case of cropped structures and create empty copy
+    structure_index_reset = structure.reset_index(drop=True)
+    structure_interpolated = structure_index_reset.copy()[
+        :0
+    ]  # get empty structure to fill
+
+    for i in range(len(structure_index_reset)):
+
+        name = structure_index_reset.loc[i]["name"]
+        n = structure_index_reset.loc[i]["n"]
+        position = structure_index_reset.loc[i]["position"]
+        d = structure_index_reset.loc[i]["d"]
+
+        position_interpolated = np.linspace(position, position + d, position_resolution)
+        resolution = np.gradient(position_interpolated)
+
+        layer_interpolated = pd.DataFrame(
+            {
+                "name": [name] * len(position_interpolated),
+                "n": [n] * len(position_interpolated),
+                "d": resolution,
+                "position": position_interpolated,
+            }
+        )
+
+        structure_interpolated = pd.concat(
+            [
+                structure_interpolated,
+                layer_interpolated,
+            ],
+            ignore_index=True,
+        )
+
+    return structure_interpolated

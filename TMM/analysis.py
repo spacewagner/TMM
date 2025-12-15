@@ -38,7 +38,39 @@ from TMM.structure_builder import (
     get_VCSEL_structure,
     build_DBR_structure,
     plot_structure,
+    interpolate_structure,
 )
+
+
+def analyze_electrical_field(structure, target_wavelength, Print=True, Plot=True):
+
+    field_positions, field_values, n_field_arr = calculate_electrical_field(
+        structure, target_wavelength, Plot=Plot
+    )
+
+    field_positions = np.array(field_positions)
+    n_field_arr = np.array(n_field_arr)
+
+    Gamma_z = 0.0
+    if (structure["name"] == "Cavity").any():
+        cavity_start = float(
+            structure.loc[structure["name"] == "Cavity", "position"].iloc[0]
+        )
+        cavity_d = float(structure.loc[structure["name"] == "Cavity", "d"].iloc[0])
+        cavity_stop = cavity_start + cavity_d
+
+        energy_full = np.sum(np.real(n_field_arr) * np.abs(field_values) ** 2)
+        mask_cav = (field_positions >= cavity_start) & (field_positions <= cavity_stop)
+        energy_cav = np.sum(
+            np.real(n_field_arr[mask_cav]) * np.abs(field_values[mask_cav]) ** 2
+        )
+        Gamma_z = float(energy_cav / energy_full) if energy_full != 0 else 0.0
+
+    if Print:
+        print("=" * 60 + "\nElectrical Field Analysis \n" + "=" * 60)
+        print(f"Mode confinement Gamma_z: {Gamma_z:.4f}")
+
+    return field_positions, field_values, n_field_arr, Gamma_z
 
 
 def analyze_AR_coating(structure, target_wavelength, n_coating=1.45, Plot=True):
@@ -530,7 +562,7 @@ def analyze_VCSEL(
         Print=print_details,
     )
 
-    field_positions, field_values, Gamma_z = calculate_electrical_field(
+    field_positions, field_values, n_field_arr, Gamma_z = analyze_electrical_field(
         VCSEL, target_wavelength, Plot=plot_details, Print=print_details
     )
     T_arr = np.linspace(300, 400, 5)
@@ -558,30 +590,32 @@ def analyze_VCSEL(
     # First row: full width plot (row 1, spans 2 columns)
     ax1 = plt.subplot(3, 2, (1, 2))  # Span columns 1-2 of row 1
 
-    # only plot real part of n
-    VCSEL_real = VCSEL.copy()
-    VCSEL_real["n"] = np.real(VCSEL_real["n"])
+    structure_interpolated = interpolate_structure(VCSEL)
+    structure_interpolated["n"] = np.real(
+        structure_interpolated["n"]
+    )  # only plot Re(n)
 
-    ax1.step(
-        VCSEL_real["position"] * 1e6,
-        VCSEL_real["n"],
-        where="post",
-        #  label="n(z)"
+    ax1.plot(
+        structure_interpolated["position"] * 1e6,
+        structure_interpolated["n"],
+        label="n(z)",
     )
 
-    last_pos = VCSEL_real.iloc[-1]["position"]
-    last_d = VCSEL_real.iloc[-1]["d"]
-    ax1.step(
-        np.array([last_pos, last_pos + last_d]) * 1e6,
-        [VCSEL_real.iloc[-1]["n"], VCSEL_real.iloc[-1]["n"]],
-        where="post",
-        color="tab:blue",
+    cavity_start = float(
+        structure_interpolated.loc[
+            structure_interpolated["name"] == "Cavity", "position"
+        ].iloc[0]
     )
-
-    cavity_start = float(VCSEL_real.loc[VCSEL["name"] == "Cavity", "position"].iloc[0])
-    cavity_d = float(VCSEL_real.loc[VCSEL["name"] == "Cavity", "d"].iloc[0])
-    cavity_stop = cavity_start + cavity_d
-    n_cav = float(VCSEL_real.loc[VCSEL["name"] == "Cavity", "n"].iloc[0])
+    cavity_stop = float(
+        structure_interpolated.loc[
+            structure_interpolated["name"] == "Cavity", "position"
+        ].iloc[-1]
+    )
+    n_cav = float(
+        structure_interpolated.loc[
+            structure_interpolated["name"] == "Cavity", "n"
+        ].iloc[0]
+    )
     ax1.fill_between(
         np.array([cavity_start, cavity_stop]) * 1e6,
         [0, 0],
@@ -590,57 +624,46 @@ def analyze_VCSEL(
         color="tab:red",
         label="Cavity",
     )
-
-    ax1 = plt.gca()
-    ax2 = ax1.twinx()
-    ax2.plot(
-        field_positions * 1e6,
-        np.abs(field_values) ** 2,
-        # label="$|E|^2$",
+    ax1.plot(
+        np.array(field_positions) * 1e6,
+        abs(field_values) ** 2 / np.max(abs(field_values) ** 2) * np.max(n_field_arr),
         color="tab:red",
+        label="$|E|^2$",
     )
 
-    # Get lines and labels from both axes
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-
     # Combine them
-    ax1.legend(lines1 + lines2, labels1 + labels2)
+    ax1.legend()
     ax1.autoscale(enable=True, axis="x", tight=True)
     ax1.autoscale(enable=True, axis="y", tight=True)
-    ax2.autoscale(enable=True, axis="y", tight=True)
-
     ax1.set_xlabel("Postion $(\\mu m)$")
-    ax1.set_ylabel("Refractive index", color="tab:blue")
-    ax2.set_ylabel("$|E|^2$", color="tab:red")
+    ax1.set_ylabel("Refractive index")
 
     # Second row: two plots
     ax2 = plt.subplot(3, 2, 3)  # Row 2, Column 1
     ax1 = plt.gca()
     ax1.plot(wavelength_arr * 1e9, r_arr, color="tab:blue", label="Reflectivity")
-    ax1.axhline(0.5, linestyle=":", color="tab:red")
     ax1.set_xlabel("Wavelength (nm)")
-    ax1.set_ylabel("Reflectivity", color="tab:blue")
+    ax1.set_ylabel("Reflectivity")
 
     # Create second y-axis for phase
-    ax2 = ax1.twinx()
-    ax2.plot(
-        wavelength_arr * 1e9,
-        phase_arr / np.pi,
-        color="tab:orange",
-        label="Phase",
-        linestyle=":",
-    )
-    ax2.set_ylabel("Phase (rad)", color="tab:orange")
+    # ax2 = ax1.twinx()
+    # ax2.plot(
+    #     wavelength_arr * 1e9,
+    #     phase_arr / np.pi,
+    #     color="tab:orange",
+    #     label="Phase",
+    #     linestyle=":",
+    # )
+    # ax2.set_ylabel("Phase (rad)", color="tab:orange")
 
     # # Add a single legend for both plots
     # lines1, labels1 = ax1.get_legend_handles_labels()
     # lines2, labels2 = ax2.get_legend_handles_labels()
     # ax1.legend(lines1 + lines2, labels1 + labels2, loc="best")
+    # ax2.set_ylim(-1, 1)
 
     if cavity_resonance_reflectivity <= 1:
         ax1.set_ylim(0, 1)
-    ax2.set_ylim(-1, 1)
     ax1.autoscale(enable=True, axis="x", tight=True)
 
     ax3 = plt.subplot(3, 2, 4)  # Row 2, Column 2
