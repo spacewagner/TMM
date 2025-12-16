@@ -1,6 +1,13 @@
 # --- file: analysis.py ---
 """
 
+TODO
+
+need to be adjusted:
+analyze_DBR
+analyze_VCSELs_DBR
+analyze_VCSEL
+
 High-level analysis routines for VCSELs and DBRs.
 
 analyze_AR_coating: apply coating layer on top of structure and evaluate optical properties
@@ -21,11 +28,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 import time
+from scipy import constants as const
 
 from TMM.optics_utils import (
     wavelength_to_frequency,
     transfer_matrix,
     calculate_reflectivity,
+    DBR_penetration_depth,
+    VCSEL_mirror_loss,
+    VCSEL_photon_lifetime,
+    VCSEL_threshold_gain,
+    coextinction_to_loss,
 )
 from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
 
@@ -39,6 +52,7 @@ from TMM.structure_builder import (
     build_DBR_structure,
     plot_structure,
     interpolate_structure,
+    flip_structure,
 )
 
 
@@ -51,6 +65,10 @@ def analyze_electrical_field(structure, target_wavelength, Print=True, Plot=True
     field_positions = np.array(field_positions)
     n_field_arr = np.array(n_field_arr)
 
+    integral_full_real = np.sum(np.real(n_field_arr) * np.abs(field_values) ** 2)
+    integral_full_imaginary = np.sum(np.imag(n_field_arr) * np.abs(field_values) ** 2)
+    alpha_i = coextinction_to_loss(integral_full_imaginary)
+
     Gamma_z = 0.0
     if (structure["name"] == "Cavity").any():
         cavity_start = float(
@@ -59,18 +77,24 @@ def analyze_electrical_field(structure, target_wavelength, Print=True, Plot=True
         cavity_d = float(structure.loc[structure["name"] == "Cavity", "d"].iloc[0])
         cavity_stop = cavity_start + cavity_d
 
-        energy_full = np.sum(np.real(n_field_arr) * np.abs(field_values) ** 2)
-        mask_cav = (field_positions >= cavity_start) & (field_positions <= cavity_stop)
-        energy_cav = np.sum(
-            np.real(n_field_arr[mask_cav]) * np.abs(field_values[mask_cav]) ** 2
+        mask_cavity = (field_positions >= cavity_start) & (
+            field_positions <= cavity_stop
         )
-        Gamma_z = float(energy_cav / energy_full) if energy_full != 0 else 0.0
+        integral_cavity = np.sum(
+            np.real(n_field_arr[mask_cavity]) * np.abs(field_values[mask_cavity]) ** 2
+        )
+        Gamma_z = (
+            float(integral_cavity / integral_full_real)
+            if integral_full_real != 0
+            else 0.0
+        )
 
     if Print:
         print("=" * 60 + "\nElectrical Field Analysis \n" + "=" * 60)
         print(f"Mode confinement Gamma_z: {Gamma_z:.4f}")
+        print(f"Internal loss: {alpha_i*1e-2:.5f} /cm")
 
-    return field_positions, field_values, n_field_arr, Gamma_z
+    return field_positions, field_values, n_field_arr, Gamma_z, alpha_i
 
 
 def analyze_AR_coating(structure, target_wavelength, n_coating=1.45, Plot=True):
@@ -199,7 +223,7 @@ def analyse_cavity_dip(
         print(f"Cavity transmission: {cavity_resonance_transmission:.3f}")
         print(f"Cavity gain: {cavity_gain:.3f}")
         print(f"FWHM: {FWHM*1e9:.4f} nm -> Q: {Q_factor:.2f}")
-        print(f"Cavity lifetime: {cavity_lifetime:.4e} s")
+        print(f"Photon lifetime: {cavity_lifetime*1e12:.2f} ps")
 
     return (
         wavelength_arr_ROI,
@@ -386,7 +410,9 @@ def analyze_lifetime_tuning(
             )
             start_position = end_position
 
-        plt.xlabel("Thickness~(nm)")
+        plt.autoscale(enable=True, axis="x", tight=True)
+        plt.autoscale(enable=True, axis="y", tight=True)
+        plt.xlabel("Thickness (nm)")
         plt.ylabel("Reflectivity")
         plt.legend()
 
@@ -407,9 +433,108 @@ def analyze_lifetime_tuning(
     )
 
 
+def analyze_DBR(DBR, target_wavelength, wavelength_arr, Plot=True, Print=True):
+    """
+    Docstring for analyze_DBR
+
+    :param DBR: Description
+    :param target_wavelength: Description
+    :param wavelength_arr: Description
+    :param Plot: Description
+    :param Print: Description
+
+
+    TODO
+
+    Calculate penetration depth michalzik eq. 2.5
+    """
+
+    wavelength_arr, DBR_r_arr, DBR_t_arr, DBR_phase_arr = calculate_optical_properties(
+        DBR, wavelength_arr, Plot=Plot
+    )
+
+    DBR_field_positions, DBR_field_values, DBR_n_field_arr = calculate_electrical_field(
+        DBR, target_wavelength, Plot=False
+    )
+
+    idx_target = np.argmin(np.abs(wavelength_arr - target_wavelength))
+    DBR_r_at_target = DBR_r_arr[idx_target]
+    DBR_phase_at_target = DBR_phase_arr[idx_target]
+
+    idx_left = np.where(DBR_r_arr >= DBR_r_at_target * 0.99)[0][0]
+    idx_right = np.where(DBR_r_arr >= DBR_r_at_target * 0.99)[0][-1]
+    DBR_stopband_width = wavelength_arr[idx_right] - wavelength_arr[idx_left]
+
+    n1 = DBR.loc[(DBR["name"] == "DBR_1")]["n"].values[0]
+    n2 = DBR.loc[(DBR["name"] == "DBR_2")]["n"].values[0]
+    l_eff = DBR_penetration_depth(n1, n2, DBR_r_at_target, target_wavelength)
+    interface_position = DBR.iloc[-1]["position"]
+
+    if Plot:
+        plot_structure(DBR)
+        plt.plot(
+            np.array(DBR_field_positions) * 1e6,
+            abs(DBR_field_values) ** 2
+            / np.max(abs(DBR_field_values) ** 2)
+            * np.max(DBR_n_field_arr),
+            color="tab:red",
+            label="$|E|^2$",
+        )
+        plt.axvline(
+            (interface_position - l_eff) * 1e6,
+            linestyle=":",
+            color="black",
+            label=f"l_eff = {l_eff*1e6:.2f}$\\mu m$ ",
+        )
+        plt.legend()
+        plt.show()
+        plt.plot(wavelength_arr * 1e9, DBR_r_arr)
+        plt.plot(wavelength_arr * 1e9, DBR_t_arr)
+        plt.xlabel("Wavelength (nm)")
+        plt.ylabel("Reflectivity")
+        plt.show()
+        plt.plot(wavelength_arr * 1e9, DBR_phase_arr)
+        plt.xlabel("Wavelength (nm)")
+        plt.ylabel("Phase")
+        plt.legend()
+        plt.show()
+
+    if Print:
+
+        print("=" * 60 + "\nDBR Analysis \n" + "=" * 60)
+        print(f"Results at target wavelength: {target_wavelength*1e9:.3f}nm")
+        print(f"DBR reflectivity: {DBR_r_at_target:.6f}")
+        print(f"DBR phase: {DBR_phase_at_target:.2f}")
+        print(f"DBR stopband width: {DBR_stopband_width*1e9:.2f}nm")
+        print(f"DBR effective penetration depth: {l_eff*1e6:.3f}$\\mu m$")
+
+    return (
+        DBR_r_arr,
+        DBR_t_arr,
+        DBR_phase_arr,
+        DBR_r_at_target,
+        DBR_phase_at_target,
+        DBR_stopband_width,
+        DBR_field_positions,
+        DBR_field_values,
+        DBR_n_field_arr,
+        l_eff,
+        interface_position,
+    )
+
+
 def analyze_VCSELs_DBRs(
-    VCSEL, target_wavelength, wavelength_arr, Plot=True, Print=True
+    VCSEL, target_wavelength, wavelength_arr, Plot=True, Print=True, Save_to="pdf"
 ):
+    """
+    Docstring for analyze_VCSELs_DBRs
+
+    :param VCSEL: Description
+    :param target_wavelength: Description
+    :param wavelength_arr: Description
+    :param Plot: Description
+    :param Print: Description
+    """
 
     VCSEL_real = VCSEL.copy()
     VCSEL_real["n"] = np.real(VCSEL_real["n"])  # only take real part of n
@@ -434,76 +559,198 @@ def analyze_VCSELs_DBRs(
         n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
     )
 
-    wavelength_arr, DBR_bottom_r_arr, DBR_bottom_t_arr, DBR_bottom_phase_arr = (
-        calculate_optical_properties(DBR_bottom, wavelength_arr, Plot=False)
+    # Top DBR needs to be flipped, since incident wave is coming from bottom side, not top side
+    DBR_top = flip_structure(DBR_top)
+
+    (
+        DBR_bottom_r_arr,
+        DBR_bottom_t_arr,
+        DBR_bottom_phase_arr,
+        DBR_bottom_r_at_target,
+        DBR_bottom_phase_at_target,
+        DBR_bottom_stopband_width,
+        DBR_bottom_field_positions,
+        DBR_bottom_field_values,
+        DBR_bottom_n_field_arr,
+        DBR_bottom_l_eff,
+        DBR_bottom_interface_position,
+    ) = analyze_DBR(
+        DBR_bottom, target_wavelength, wavelength_arr, Plot=False, Print=False
     )
 
-    wavelength_arr, DBR_top_r_arr, DBR_top_t_arr, DBR_top_phase_arr = (
-        calculate_optical_properties(DBR_top, wavelength_arr, Plot=False)
+    (
+        DBR_top_r_arr,
+        DBR_top_t_arr,
+        DBR_top_phase_arr,
+        DBR_top_r_at_target,
+        DBR_top_phase_at_target,
+        DBR_top_stopband_width,
+        DBR_top_field_positions,
+        DBR_top_field_values,
+        DBR_top_n_field_arr,
+        DBR_top_l_eff,
+        DBR_top_interface_position,
+    ) = analyze_DBR(DBR_top, target_wavelength, wavelength_arr, Plot=False, Print=False)
+
+    n_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["n"].values[0]
+    L_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["d"].values[0]
+    L_eff = L_cavity + DBR_bottom_l_eff + DBR_top_l_eff
+    alpha_m = VCSEL_mirror_loss(L_eff, DBR_top_r_at_target, DBR_bottom_r_at_target)
+
+    DBR_bottom_n1 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_1")]["n"].values[0]
+    DBR_bottom_n2 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_2")]["n"].values[0]
+    DBR_bottom_d1 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_1")]["d"].values[0]
+    DBR_bottom_d2 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_2")]["d"].values[0]
+    DBR_bottom_n_eff = (
+        DBR_bottom_n1 * DBR_bottom_d1 + DBR_bottom_n2 * DBR_bottom_d2
+    ) / (DBR_bottom_d1 + DBR_bottom_d2)
+
+    DBR_top_n1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["n"].values[0]
+    DBR_top_n2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["n"].values[0]
+    DBR_top_d1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["d"].values[0]
+    DBR_top_d2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["d"].values[0]
+    DBR_top_n_eff = (DBR_top_n1 * DBR_top_d1 + DBR_top_n2 * DBR_top_d2) / (
+        DBR_top_d1 + DBR_top_d2
     )
 
-    idx_target = np.argmin(np.abs(wavelength_arr - target_wavelength))
-    DBR_top_r_at_target = DBR_top_r_arr[idx_target]
-    DBR_bottom_r_at_target = DBR_bottom_r_arr[idx_target]
-    DBR_top_phase_at_target = DBR_top_phase_arr[idx_target]
-    DBR_bottom_phase_at_target = DBR_bottom_phase_arr[idx_target]
+    n_cavity_eff = (
+        n_cavity * L_cavity
+        + DBR_bottom_n_eff * DBR_bottom_l_eff
+        + DBR_top_n_eff * DBR_top_l_eff
+    ) / L_eff
 
-    idx_left_bottom = np.where(DBR_bottom_r_arr >= DBR_bottom_r_at_target * 0.99)[0][0]
-    idx_right_bottom = np.where(DBR_bottom_r_arr >= DBR_bottom_r_at_target * 0.99)[0][
-        -1
-    ]
-    DBR_bottom_stopband_width = (
-        wavelength_arr[idx_right_bottom] - wavelength_arr[idx_left_bottom]
-    )
+    v_gr = const.c / n_cavity_eff
 
-    idx_left_top = np.where(DBR_top_r_arr >= DBR_top_r_at_target * 0.99)[0][0]
-    idx_right_top = np.where(DBR_top_r_arr >= DBR_top_r_at_target * 0.99)[0][-1]
-    DBR_top_stopband_width = (
-        wavelength_arr[idx_right_top] - wavelength_arr[idx_left_top]
-    )
+    photon_lifetime = VCSEL_photon_lifetime(v_gr, alpha_m)
 
     if Plot:
-        plot_structure(DBR_top)
-        plt.title("Bottom DBR")
-        plot_structure(DBR_bottom)
-        plt.title("Top DBR")
-        plt.show()
-        plt.plot(wavelength_arr * 1e9, DBR_bottom_r_arr, label="Bottom DBR")
-        plt.plot(wavelength_arr * 1e9, DBR_top_r_arr, label="Top DBR")
-        plt.xlabel("Wavelength (nm)")
-        plt.ylabel("Reflectivity")
-        plt.legend()
-        plt.show()
-        plt.plot(wavelength_arr * 1e9, DBR_bottom_phase_arr, label="Bottom DBR")
-        plt.plot(wavelength_arr * 1e9, DBR_top_phase_arr, label="Top DBR")
-        plt.xlabel("Wavelength (nm)")
-        plt.ylabel("Phase")
-        plt.legend()
-        plt.show()
+
+        # Create figure
+        fig = plt.figure(figsize=(11, 8))
+
+        ax1 = plt.subplot(2, 2, 1)  # Span column 1 of row 1
+
+        ax1.plot(
+            np.array(DBR_bottom_field_positions) * 1e6,
+            np.real(DBR_bottom_n_field_arr),
+            label="n(z)",
+        )
+        ax1.plot(
+            np.array(DBR_bottom_field_positions) * 1e6,
+            abs(DBR_bottom_field_values) ** 2
+            / np.max(abs(DBR_bottom_field_values) ** 2)
+            * np.max(DBR_bottom_n_field_arr),
+            color="tab:red",
+            label="$norm. |E|^2$",
+        )
+        ax1.axvline(
+            (DBR_bottom_interface_position - DBR_bottom_l_eff) * 1e6,
+            linestyle=":",
+            color="black",
+            label=f"l_eff = {DBR_bottom_l_eff*1e6:.2f}$\\mu m$ ",
+        )
+        ax1.autoscale(enable=True, axis="x", tight=True)
+        ax1.autoscale(enable=True, axis="y", tight=True)
+        ax1.set_xlabel("Position (nm)")
+        ax1.legend()
+        ax1.set_title("Bottom DBR")
+
+        ax2 = plt.subplot(2, 2, 2)
+
+        ax2.plot(
+            np.array(DBR_top_field_positions) * 1e6,
+            np.real(DBR_top_n_field_arr),
+            label="n(z)",
+        )
+        ax2.plot(
+            np.array(DBR_top_field_positions) * 1e6,
+            abs(DBR_top_field_values) ** 2
+            / np.max(abs(DBR_top_field_values) ** 2)
+            * np.max(DBR_top_n_field_arr),
+            color="tab:red",
+            label="$norm. |E|^2$",
+        )
+        ax2.axvline(
+            (DBR_top_interface_position - DBR_top_l_eff) * 1e6,
+            linestyle=":",
+            color="black",
+            label=f"l_eff = {DBR_top_l_eff*1e6:.2f}$\\mu m$ ",
+        )
+        ax2.autoscale(enable=True, axis="x", tight=True)
+        ax2.autoscale(enable=True, axis="y", tight=True)
+        ax2.set_xlabel("Position (nm)")
+        ax2.legend()
+        ax2.set_title("Top DBR")
+
+        ax3 = plt.subplot(2, 2, 3)
+        ax3.plot(wavelength_arr * 1e9, DBR_bottom_r_arr, label="Bottom DBR")
+        ax3.plot(wavelength_arr * 1e9, DBR_top_r_arr, label="Top DBR")
+        ax3.autoscale(enable=True, axis="x", tight=True)
+        ax3.set_ylim(0, 1)
+        ax3.set_xlabel("Wavelength (nm)")
+        ax3.set_ylabel("Reflectivity")
+        ax3.legend()
+
+        ax4 = plt.subplot(2, 2, 4)
+        ax4.plot(wavelength_arr * 1e9, DBR_bottom_phase_arr, label="Bottom DBR")
+        ax4.plot(wavelength_arr * 1e9, DBR_top_phase_arr, label="Top DBR")
+        ax4.autoscale(enable=True, axis="x", tight=True)
+        ax4.set_ylim(-np.pi, np.pi)
+        ax4.set_xlabel("Wavelength (nm)")
+        ax4.set_ylabel("Phase")
+        ax4.legend()
+
+        plt.tight_layout()
+
+        if Save_to != None:
+            formatted_time = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"DBR_analysis_{formatted_time}." + Save_to
+            plt.savefig(filename, bbox_inches="tight", dpi=600)
+            print("File saved to: " + filename)
 
     if Print:
 
         print("=" * 60 + "\nDBR Analysis \n" + "=" * 60)
-        print(f"Results at target wavelength: {target_wavelength*1e9:.3f}nm")
+        print(f"Results at target wavelength: {target_wavelength*1e9:.3f} nm")
         print(f"Bottom DBR reflectivity: {DBR_bottom_r_at_target:.6f}")
         print(f"Top DBR reflectivity: {DBR_top_r_at_target:.6f}")
         print(f"Bottom DBR phase: {DBR_bottom_phase_at_target:.2f}")
         print(f"Top DBR phase: {DBR_top_phase_at_target:.2f}")
-        print(f"Bottom DBR stopband width: {DBR_bottom_stopband_width*1e9:.2f}nm")
-        print(f"Top DBR stopband width: {DBR_top_stopband_width*1e9:.2f}nm")
+        print(f"Bottom DBR stopband width: {DBR_bottom_stopband_width*1e9:.2f} nm")
+        print(f"Top DBR stopband width: {DBR_top_stopband_width*1e9:.2f} nm")
+        print(f"Bottom DBR effective penetration depth: {DBR_bottom_l_eff*1e6:.3f} um")
+        print(f"Top DBR effective penetration depth: {DBR_top_l_eff*1e6:.3f} um")
+        print(f"Effective cavity length: {L_eff*1e6:.3f} um")
+        print(f"Mirror loss: {alpha_m*1e-2:.2f} /cm")
+        print(f"Group velocity in effective cavity: {v_gr:.2f} m/s")
+        print(f"Estimated photon lifetime: {photon_lifetime*1e12:.2f} ps")
 
     return (
         DBR_bottom_r_arr,
         DBR_bottom_t_arr,
         DBR_bottom_phase_arr,
+        DBR_bottom_r_at_target,
+        DBR_bottom_phase_at_target,
+        DBR_bottom_stopband_width,
         DBR_top_r_arr,
         DBR_top_t_arr,
         DBR_top_phase_arr,
+        DBR_top_r_at_target,
+        DBR_top_phase_at_target,
+        DBR_top_stopband_width,
+        L_eff,
+        alpha_m,
+        photon_lifetime,
     )
 
 
 def analyze_VCSEL(
-    VCSEL, target_wavelength, plot_details=False, print_details=True, Save_to="pdf"
+    VCSEL,
+    target_wavelength,
+    n_coating=1.45,
+    plot_details=False,
+    print_details=True,
+    Save_to="pdf",
 ):
 
     if plot_details:
@@ -541,9 +788,18 @@ def analyze_VCSEL(
         DBR_bottom_r_arr,
         DBR_bottom_t_arr,
         DBR_bottom_phase_arr,
+        DBR_bottom_r_at_target,
+        DBR_bottom_phase_at_target,
+        DBR_bottom_stopband_width,
         DBR_top_r_arr,
         DBR_top_t_arr,
         DBR_top_phase_arr,
+        DBR_top_r_at_target,
+        DBR_top_phase_at_target,
+        DBR_top_stopband_width,
+        L_eff,
+        alpha_m,
+        photon_lifetime,
     ) = analyze_VCSELs_DBRs(VCSEL, target_wavelength, wavelength_arr, Plot=False)
 
     (
@@ -557,14 +813,20 @@ def analyze_VCSEL(
     ) = analyze_lifetime_tuning(
         VCSEL,
         target_wavelength,
-        n_AR_coating=1.45,
+        n_AR_coating=n_coating,
         Plot=plot_details,
         Print=print_details,
     )
 
-    field_positions, field_values, n_field_arr, Gamma_z = analyze_electrical_field(
-        VCSEL, target_wavelength, Plot=plot_details, Print=print_details
+    field_positions, field_values, n_field_arr, Gamma_z, alpha_i = (
+        analyze_electrical_field(
+            VCSEL, target_wavelength, Plot=plot_details, Print=print_details
+        )
     )
+
+    threshold_gain = VCSEL_threshold_gain(Gamma_z, alpha_m)
+    print(f"Estimated threshold gain: {threshold_gain*1e-2:.2f}/cm")
+
     T_arr = np.linspace(300, 400, 5)
 
     (
@@ -646,21 +908,21 @@ def analyze_VCSEL(
     ax1.set_ylabel("Reflectivity")
 
     # Create second y-axis for phase
-    # ax2 = ax1.twinx()
-    # ax2.plot(
-    #     wavelength_arr * 1e9,
-    #     phase_arr / np.pi,
-    #     color="tab:orange",
-    #     label="Phase",
-    #     linestyle=":",
-    # )
-    # ax2.set_ylabel("Phase (rad)", color="tab:orange")
+    ax2 = ax1.twinx()
+    ax2.plot(
+        wavelength_arr * 1e9,
+        phase_arr / np.pi,
+        color="tab:orange",
+        label="Phase",
+        linestyle=":",
+    )
+    ax2.set_ylabel("Phase (rad)", color="tab:orange")
 
-    # # Add a single legend for both plots
-    # lines1, labels1 = ax1.get_legend_handles_labels()
-    # lines2, labels2 = ax2.get_legend_handles_labels()
-    # ax1.legend(lines1 + lines2, labels1 + labels2, loc="best")
-    # ax2.set_ylim(-1, 1)
+    # Add a single legend for both plots
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="best")
+    ax2.set_ylim(-1, 1)
 
     if cavity_resonance_reflectivity <= 1:
         ax1.set_ylim(0, 1)

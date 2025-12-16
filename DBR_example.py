@@ -14,11 +14,12 @@ from TMM.structure_builder import (
     build_DBR_structure,
     plot_structure,
     wavelength_arr_adaptive_mesh,
+    flip_structure,
 )
 from TMM.field_solver import calculate_optical_properties
 from TMM.optics_utils import R_theoretical
 
-from TMM.analysis import analyze_electrical_field
+from TMM.analysis import analyze_electrical_field, analyze_DBR
 
 # %%
 
@@ -32,16 +33,62 @@ GaAs = 3.52
 AlAs = 2.95
 
 target_wavelength = 980e-9
-DBR = build_DBR_structure(
-    GaAs, AlAs, 20.0, target_wavelength, n_substrate=GaAs, n_air=GaAs
+
+# Set wavelength range for the spectra by using the adaptive mesh function
+wavelength_arr = wavelength_arr_adaptive_mesh(
+    target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
 )
 
+# Build DBR structure
+DBR = build_DBR_structure(
+    GaAs, AlAs, 20.5, target_wavelength, n_substrate=GaAs, n_air=1
+)
+
+# Plot the DBR structure
 plot_structure(DBR)
+
+# run full analysis on the DBR
+(
+    DBR_r_arr,
+    DBR_t_arr,
+    DBR_phase_arr,
+    DBR_r_at_target,
+    DBR_phase_at_target,
+    DBR_stopband_width,
+    DBR_field_positions,
+    DBR_field_values,
+    DBR_n_field_arr,
+    l_eff,
+    interface_position,
+) = analyze_DBR(DBR, target_wavelength, wavelength_arr)
+
 # %%
 
 """
+Flip the structure to imitate incident wave from the opposite side.
 
-Calculate optical response
+"""
+
+DBR_flipped = flip_structure(DBR)
+
+(
+    DBR_r_arr,
+    DBR_t_arr,
+    DBR_phase_arr,
+    DBR_r_at_target,
+    DBR_phase_at_target,
+    DBR_stopband_width,
+    DBR_field_positions,
+    DBR_field_values,
+    DBR_n_field_arr,
+    l_eff,
+    interface_position,
+) = analyze_DBR(DBR_flipped, target_wavelength, wavelength_arr)
+
+# %%
+
+"""
+Calculate optical response.
 
 """
 
@@ -56,13 +103,12 @@ wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
 # %%
 
 """
-
-Calculate electrical field distribution
+Calculate electrical field distribution.
 
 """
 
-field_positions, field_values, n_field_arr, Gamma_z = analyze_electrical_field(
-    DBR, target_wavelength
+field_positions, field_values, n_field_arr, Gamma_z, internal_loss = (
+    analyze_electrical_field(DBR, target_wavelength)
 )
 
 # %% Reflectivity over N for even amount of layers

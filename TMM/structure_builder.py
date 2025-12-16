@@ -368,3 +368,19 @@ def interpolate_structure(structure, position_resolution: int = 100):
         )
 
     return structure_interpolated
+
+
+def flip_structure(structure):
+    structure_flipped = structure.iloc[::-1]
+    structure_flipped = structure_flipped.reset_index(drop=True)
+
+    position = 0.0
+    position_arr = []
+    for i in range(len(structure_flipped)):
+        position_arr.append(position)
+        d = structure_flipped.iloc[i]["d"]
+        position += d
+
+    structure_flipped["position"] = position_arr
+
+    return structure_flipped

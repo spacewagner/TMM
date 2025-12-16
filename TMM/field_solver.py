@@ -35,8 +35,8 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
     t_arr = []
     phase_arr = []
 
-    n_incident = structure.iloc[0]["n"]
-    n_transmission = structure.iloc[-1]["n"]
+    n_incident = structure.iloc[-1]["n"]
+    n_transmission = structure.iloc[0]["n"]
 
     for wavelength in wavelength_arr:
         M_total = transfer_matrix(structure, wavelength)
@@ -96,6 +96,7 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
     return wavelength_arr, r_arr, t_arr, phase_arr
 
 
+# Calculate for incident from top, for better comparability with experiment and literature
 def calculate_electrical_field(
     structure, target_wavelength, position_resolution: int = 100, Plot=True, Print=True
 ):
@@ -113,11 +114,11 @@ def calculate_electrical_field(
     n_field_arr = []
 
     # n_previous referrs to n of the previous investigated layer, so the right next layer. From point of forwards propagating wave, it's always going from the current layer to the previous investigated layer T_n_n_previous
-    n_previous = structure.iloc[-1]["n"]
+    n_previous = structure.iloc[0]["n"]
     field_positions = []
 
     # go backwards through structure
-    for i in range(len(structure_interpolated) - 1, -1, -1):
+    for i in range(len(structure_interpolated)):
 
         n = structure_interpolated.iloc[i]["n"]
         d = structure_interpolated.iloc[i]["d"]
@@ -138,7 +139,7 @@ def calculate_electrical_field(
 
         field_positions.append(position_global)
         vec_arr.append(vec)
-        n_field_arr.append(n.real)
+        n_field_arr.append(n)
 
     # collect field components
     field_values = np.array([vec[0] + vec[1] for vec in vec_arr])
@@ -147,15 +148,15 @@ def calculate_electrical_field(
 
     if Plot:
         # calculate R, T from transfermatrix
-        n_incident = structure.iloc[0]["n"]
-        n_transmission = structure.iloc[-1]["n"]
+        n_incident = structure.iloc[-1]["n"]
+        n_transmission = structure.iloc[0]["n"]
         M = transfer_matrix(structure, target_wavelength)
         R = calculate_reflectivity(M)
         T = calculate_transmission(M, n_incident, n_transmission)
 
         # not exactly pointing, because no norming to vacuum impedance
-        S_forward = np.array(n_field_arr) * abs(field_forward) ** 2
-        S_backward = np.array(n_field_arr) * abs(field_backward) ** 2
+        S_forward = np.array(np.real(n_field_arr)) * abs(field_forward) ** 2
+        S_backward = np.array(np.real(n_field_arr)) * abs(field_backward) ** 2
 
         # plotting
         plot_structure(structure)
@@ -163,7 +164,7 @@ def calculate_electrical_field(
             np.array(field_positions) * 1e6,
             abs(field_values) ** 2
             / np.max(abs(field_values) ** 2)
-            * np.max(n_field_arr),
+            * np.max(np.real(n_field_arr)),
             color="tab:red",
             label="$|E|^2$",
         )
@@ -192,7 +193,7 @@ def calculate_electrical_field(
         plt.axhline(R + T, linestyle=":", label="R+T", color="black")
         plt.plot(
             field_positions,
-            n_field_arr / np.max(n_field_arr),
+            np.real(n_field_arr) / np.max(np.real(n_field_arr)),
             alpha=0.3,
         )
         plt.legend()

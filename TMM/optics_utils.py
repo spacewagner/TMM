@@ -54,6 +54,34 @@ def transfer_matrix_layer(n: complex, d: float, wavelength: float) -> np.ndarray
     return np.array([[np.exp(-1j * phi), 0.0], [0.0, np.exp(1j * phi)]], dtype=complex)
 
 
+# def transfer_matrix(structure, wavelength):
+#     """
+
+#     Compute the total transfer matrix for a stacked structure. Scheme described in Coldren Example 3.1
+
+#     """
+#     M_total = np.eye(2, dtype=complex)
+
+#     # go backwards through structure
+#     for i in range(len(structure) - 1, -1, -1):
+
+#         n = structure.iloc[i]["n"]
+#         d = structure.iloc[i]["d"]
+
+#         # Layer propagation
+#         P = transfer_matrix_layer(n, d, wavelength)
+#         M_total = P @ M_total
+
+#         # Interface to previous layer, from end to start position
+#         if i > 0:
+#             n_previous = structure.iloc[i - 1]["n"]
+#             T_n_previous_n = transfer_matrix_interface(n_previous, n)
+#             M_total = T_n_previous_n @ M_total
+
+#     return M_total
+
+
+# This way it will calculate from Surface to interface
 def transfer_matrix(structure, wavelength):
     """
 
@@ -63,7 +91,7 @@ def transfer_matrix(structure, wavelength):
     M_total = np.eye(2, dtype=complex)
 
     # go backwards through structure
-    for i in range(len(structure) - 1, -1, -1):
+    for i in range(len(structure)):
 
         n = structure.iloc[i]["n"]
         d = structure.iloc[i]["d"]
@@ -72,9 +100,9 @@ def transfer_matrix(structure, wavelength):
         P = transfer_matrix_layer(n, d, wavelength)
         M_total = P @ M_total
 
-        # Interface to previous layer, from end to start position
-        if i > 0:
-            n_previous = structure.iloc[i - 1]["n"]
+        # Interface from previous layer, from end to start position
+        if (i + 1) < len(structure):
+            n_previous = structure.iloc[i + 1]["n"]
             T_n_previous_n = transfer_matrix_interface(n_previous, n)
             M_total = T_n_previous_n @ M_total
 
@@ -138,3 +166,59 @@ def R_theoretical(N, n1, n2, ns, n0):
         a = n1**2 * (n1 / n2) ** (2 * int(N)) - n0 * ns
         b = n1**2 * (n1 / n2) ** (2 * int(N)) + n0 * ns
     return (a / b) ** 2
+
+
+def DBR_stopband_width():
+    """
+    TODO
+    Michalzik eq. 2.3
+    """
+
+
+def DBR_penetration_depth(n1, n2, R, target_wavelength):
+    """
+    Michalzik eq. 2.5
+    """
+    delta_n = abs(n1 - n2)
+    kappa = 2 * delta_n / target_wavelength
+    a = np.sqrt(R)
+    b = 2 * kappa
+    return a / b
+
+
+def VCSEL_mirror_loss(L_eff, R_top, R_bottom):
+    """
+    Docstring for VCSEL_mirror_loss
+
+    :param L_eff: Description
+    :param R_top: Lossless Top DBR
+    :param R_bottom: Lossless Bottom DBR
+
+    Michalzik eq. 2.17
+    """
+    a = 1 / L_eff
+    b = np.log(1 / np.sqrt(R_top * R_bottom))
+    alpha_m = a * b
+    return alpha_m
+
+
+def VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i=10e2):
+    """
+    Docstring for VCSEL_threshold_gain
+
+    :param v_gr: Description
+    :param alpha_i: Internal loss, estimated
+    :param alpha_m: Description
+
+    Michalzik eq. 2.17
+    """
+
+    return 1 / (v_gr * (alpha_i + alpha_m))
+
+
+def VCSEL_threshold_gain(Gamma, alpha_m, alpha_i=5e2):
+    return (alpha_i + alpha_m) / Gamma
+
+
+def coextinction_to_loss(kappa):
+    return (4 * np.pi / const.c) * kappa

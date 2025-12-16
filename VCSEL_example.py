@@ -3,13 +3,7 @@
 """
 TODO
 
-calculate alpha_i and alpha_m by integrating mode over complex refractive index, repeat it in analyze_lifetime_tuning() for different mirror reflectivities.
-
-Normalize Electrical field in plot
-
-Calculate Mirror Losses
-
-Currently calculated from with incident from substrate. Should be reversed to match text book examples.
+analyze_liftetime_tuning currently just analyzing reflectivity, not lifetime
 
 """
 
@@ -42,11 +36,8 @@ from TMM.analysis import (
 )
 
 # %%
-
-
 """
-
-This is how you build and plot VCSEL Structures
+Build and plot a VCSEL Structure.
 
 """
 
@@ -80,21 +71,43 @@ VCSEL = build_VCSEL_structure(
 
 plot_structure(VCSEL)
 
-field_positions, field_values, n_field_arr, Gamma_z = analyze_electrical_field(
-    VCSEL, target_wavelength
-)
-
 # %% Full Analysis
 
 analyze_VCSEL(VCSEL, target_wavelength)
 
+# %% Analyse Spectra
+
+"""
+Analyse VCSELs spectral response.
+
+Set a wavelength range for the spectra by using the adaptive mesh function. This allows to have higher resolution close to the target wavelength.
+
+"""
+
+# set adaptive wavelength mesh
+wavelength_arr = wavelength_arr_adaptive_mesh(
+    target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
+)
+
+# run analysis
+wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
+    VCSEL, wavelength_arr
+)
+
+# %%
+"""
+Analyze the electrical field distribution within the VCSEL.
+
+"""
+
+field_positions, field_values, n_field_arr, Gamma_z, alpha_i = analyze_electrical_field(
+    VCSEL, target_wavelength
+)
 
 # %% Advanced functions
 
 """
-
-You can recover the structures parameters
-
+Recover the structures parameters.
 """
 
 (
@@ -113,8 +126,7 @@ You can recover the structures parameters
 # %%
 
 """
-
-You can build DBR structures
+Build DBR structures.
 
 """
 
@@ -124,41 +136,42 @@ DBR_bottom = build_DBR_structure(
 plot_structure(DBR_bottom)
 plt.show()
 
-# %% Analyse Spectra
-
-"""
-
-This is how you analyse VCSELs reflectivity spectra
-
-"""
-
-# first you need to set a wavelength range for the spectra, you can use the adaptive mesh function to have higher resolution close to the cavity wavelength
-
-wavelength_arr = wavelength_arr_adaptive_mesh(
-    target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
+DBR_top = build_DBR_structure(
+    n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
 )
+plot_structure(DBR_top)
+plt.show()
 
-wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
-    VCSEL, wavelength_arr
-)
 
 # %% analyze DBRs
+
+"""
+Analyze DBRs directliy from a defined VCSEL structure.
+
+"""
 
 (
     DBR_bottom_r_arr,
     DBR_bottom_t_arr,
     DBR_bottom_phase_arr,
+    DBR_bottom_r_at_target,
+    DBR_bottom_phase_at_target,
+    DBR_bottom_stopband_width,
     DBR_top_r_arr,
     DBR_top_t_arr,
     DBR_top_phase_arr,
+    DBR_top_r_at_target,
+    DBR_top_phase_at_target,
+    DBR_top_stopband_width,
+    L_eff,
+    alpha_m,
+    cavity_lifetime,
 ) = analyze_VCSELs_DBRs(VCSEL, target_wavelength, wavelength_arr)
-
-
 # %% Resonator Quality
 
 """
+Analyse the cavity response and the resonators quality.
 
-This is how you analyse the quality of the resonator
 """
 
 (
@@ -175,23 +188,10 @@ This is how you analyse the quality of the resonator
     hw_stop,
 ) = analyse_cavity_dip(wavelength_arr, r_arr, t_arr, target_wavelength)
 
-# %% electrical field
-
-"""
-
-This is how you analyze the electrical field profile within the VCSEL
-
-"""
-
-field_positions, field_values, Gamma_z = calculate_electrical_field(
-    VCSEL, target_wavelength
-)
-
 # %% Lifetime tuning
 
 """
-
-This is how you investigate lifetime tuning on the VCSELs structure, default material for AR Coating is SiO2 with n = 1.45
+Investigate lifetime tuning on the VCSELs structure by adding an anti reflective coating on the top DBR or by etching it partially. Default material for AR Coating is SiO2 with n = 1.45.
 
 """
 
@@ -208,8 +208,7 @@ This is how you investigate lifetime tuning on the VCSELs structure, default mat
 # %% Lifetime tuning in detail
 
 """
-
-This is how you apply etch to the investigated structure
+Apply etch to the investigated structure.
 
 """
 VCSEL_etch = apply_etch(VCSEL, 100e-9)
@@ -217,16 +216,14 @@ plot_structure(VCSEL_etch)
 plt.show()
 
 """
-
-This is how you investigate the effect of etching on reflectivity
+Investigate the effect of etching on reflectivity.
 
 """
 
 d_etch_arr, R_etch_arr, R_etch_tuning_range = analyze_etching(VCSEL, target_wavelength)
 
 """
-
-This is how you apply an AR coating
+Apply an AR coating.
 
 """
 
@@ -235,19 +232,18 @@ plot_structure(VCSEL_AR)
 plt.show()
 
 """
-
-This is how you investigate the effect of AR coating on reflectivity
+Investigate the effect of AR coating on reflectivity.
 
 """
 
 d_coating_arr, R_coating_arr, R_coating_tuning_range = analyze_AR_coating(
     VCSEL, target_wavelength
 )
+
 # %% Temperature tuning
 
 """
-
-This is how you analyze the shift of the cavity wavelength with temperature. Default temperature coefficient is 0.061 nm/K.
+Analyze the shift of the cavity wavelength with temperature. Default temperature coefficient is 0.061 nm/K.
 
 """
 
@@ -260,3 +256,5 @@ T_arr = np.linspace(300, 400, 5)
     cavity_resonance_arr,
     temperature_coefficent,
 ) = calculate_temperature_shift(VCSEL, target_wavelength, T_arr)
+
+# %%
