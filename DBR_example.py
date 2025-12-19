@@ -19,7 +19,7 @@ from TMM.structure_builder import (
 from TMM.field_solver import calculate_optical_properties
 from TMM.optics_utils import R_theoretical
 
-from TMM.analysis import analyze_electrical_field, analyze_DBR
+from TMM.analysis import analyse_electrical_field, analyse_DBR
 
 # %%
 
@@ -60,7 +60,7 @@ plot_structure(DBR)
     DBR_n_field_arr,
     l_eff,
     interface_position,
-) = analyze_DBR(DBR, target_wavelength, wavelength_arr)
+) = analyse_DBR(DBR, target_wavelength, wavelength_arr)
 
 # %%
 
@@ -83,7 +83,7 @@ DBR_flipped = flip_structure(DBR)
     DBR_n_field_arr,
     l_eff,
     interface_position,
-) = analyze_DBR(DBR_flipped, target_wavelength, wavelength_arr)
+) = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
 
 # %%
 
@@ -108,7 +108,7 @@ Calculate electrical field distribution.
 """
 
 field_positions, field_values, n_field_arr, Gamma_z, internal_loss = (
-    analyze_electrical_field(DBR, target_wavelength)
+    analyse_electrical_field(DBR, target_wavelength)
 )
 
 # %% Reflectivity over N for even amount of layers

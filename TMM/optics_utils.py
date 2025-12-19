@@ -202,7 +202,7 @@ def VCSEL_mirror_loss(L_eff, R_top, R_bottom):
     return alpha_m
 
 
-def VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i=10e2):
+def VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i):
     """
     Docstring for VCSEL_threshold_gain
 
