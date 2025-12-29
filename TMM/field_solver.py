@@ -11,6 +11,8 @@ Chuang: Physics of Photonic Devices, Chapter 5.7 - 5.9 "Matrix Optics"
 
 import numpy as np
 import matplotlib.pyplot as plt
+from dataclasses import dataclass
+from typing import Tuple, List, Optional
 
 from TMM.optics_utils import (
     transfer_matrix,
@@ -23,6 +25,30 @@ from TMM.optics_utils import (
 
 from TMM.structure_builder import plot_structure, interpolate_structure
 
+# %% Classes
+
+
+@dataclass
+class OpticalProperties:
+    wavelength_arr: np.ndarray
+    R_arr: np.ndarray
+    T_arr: np.ndarray
+    phase_arr: np.ndarray
+
+
+@dataclass
+class FieldProperties:
+    field_positions_arr: np.ndarray
+    field_values_arr: np.ndarray
+    n_field_arr: np.ndarray
+
+    # Optional
+    Gamma_z: Optional[float] = None  # Optical confinement factor
+    alpha_i: Optional[float] = None  # Internal loss [1/m]
+
+
+# %% Methods
+
 
 def calculate_optical_properties(structure, wavelength_arr, Plot=True):
     """
@@ -31,8 +57,8 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
 
     """
 
-    r_arr = []
-    t_arr = []
+    R_arr = []
+    T_arr = []
     phase_arr = []
 
     n_incident = structure.iloc[-1]["n"]
@@ -40,19 +66,23 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
 
     for wavelength in wavelength_arr:
         M_total = transfer_matrix(structure, wavelength)
-        r_arr.append(calculate_reflectivity(M_total))
-        t_arr.append(calculate_transmission(M_total, n_incident, n_transmission))
+        R_arr.append(calculate_reflectivity(M_total))
+        T_arr.append(calculate_transmission(M_total, n_incident, n_transmission))
         phase_arr.append(calculate_phase(M_total))
 
-    r_arr = np.array(r_arr)
-    t_arr = np.array(t_arr)
+    R_arr = np.array(R_arr)
+    T_arr = np.array(T_arr)
     phase_arr = np.array(phase_arr)
+
+    optical_properties_result = OpticalProperties(
+        wavelength_arr=wavelength_arr, R_arr=R_arr, T_arr=T_arr, phase_arr=phase_arr
+    )
 
     if Plot:
         plt.figure()
-        plt.plot(wavelength_arr, r_arr, label="Reflection")
-        plt.plot(wavelength_arr, t_arr, label="Transmission", alpha=0.6)
-        plt.plot(wavelength_arr, r_arr + t_arr, label="R+T", alpha=0.6)
+        plt.plot(wavelength_arr, R_arr, label="Reflection")
+        plt.plot(wavelength_arr, T_arr, label="Transmission", alpha=0.6)
+        plt.plot(wavelength_arr, R_arr + T_arr, label="R+T", alpha=0.6)
         plt.xlabel("Wavelength (m)")
         plt.legend()
         plt.grid(alpha=0.3)
@@ -67,7 +97,7 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
 
         # Create first y-axis for reflection
         ax1 = plt.gca()
-        ax1.plot(wavelength_arr * 1e9, r_arr, color="tab:blue", label="Reflectivity")
+        ax1.plot(wavelength_arr * 1e9, R_arr, color="tab:blue", label="Reflectivity")
         ax1.axhline(0.5, linestyle=":", color="tab:red")
         ax1.set_xlabel("Wavelength (nm)")
         ax1.set_ylabel("Reflectivity", color="tab:blue")
@@ -78,6 +108,7 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
             wavelength_arr * 1e9,
             phase_arr / np.pi,
             color="tab:orange",
+            alpha=0.5,
             label="Phase",
             linestyle="--",
         )
@@ -93,7 +124,7 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
 
         plt.title("Reflectivity and Phase vs Wavelength")
 
-    return wavelength_arr, r_arr, t_arr, phase_arr
+    return optical_properties_result
 
 
 # Calculate for incident from top, for better comparability with experiment and literature
@@ -115,7 +146,7 @@ def calculate_electrical_field(
 
     # n_previous referrs to n of the previous investigated layer, so the right next layer. From point of forwards propagating wave, it's always going from the current layer to the previous investigated layer T_n_n_previous
     n_previous = structure.iloc[0]["n"]
-    field_positions = []
+    field_position_arr = []
 
     # go backwards through structure
     for i in range(len(structure_interpolated)):
@@ -137,14 +168,23 @@ def calculate_electrical_field(
 
         M_total = P @ M_total
 
-        field_positions.append(position_global)
+        field_position_arr.append(position_global)
         vec_arr.append(vec)
         n_field_arr.append(n)
 
     # collect field components
-    field_values = np.array([vec[0] + vec[1] for vec in vec_arr])
-    field_forward = np.array([vec[0] for vec in vec_arr])
-    field_backward = np.array([vec[1] for vec in vec_arr])
+    field_values_arr = np.array([vec[0] + vec[1] for vec in vec_arr])
+    field_forward_arr = np.array([vec[0] for vec in vec_arr])
+    field_backward_arr = np.array([vec[1] for vec in vec_arr])
+
+    field_values_arr = np.array(field_values_arr)
+    field_positions_arr = np.array(field_position_arr)
+    n_field_arr = np.array(n_field_arr)
+    field_properties_results = FieldProperties(
+        field_positions_arr=field_positions_arr,
+        field_values_arr=field_values_arr,
+        n_field_arr=n_field_arr,
+    )
 
     if Plot:
         # calculate R, T from transfermatrix
@@ -155,15 +195,15 @@ def calculate_electrical_field(
         T = calculate_transmission(M, n_incident, n_transmission)
 
         # not exactly pointing, because no norming to vacuum impedance
-        S_forward = np.array(np.real(n_field_arr)) * abs(field_forward) ** 2
-        S_backward = np.array(np.real(n_field_arr)) * abs(field_backward) ** 2
+        S_forward = np.array(np.real(n_field_arr)) * abs(field_forward_arr) ** 2
+        S_backward = np.array(np.real(n_field_arr)) * abs(field_backward_arr) ** 2
 
         # plotting
         plot_structure(structure)
         plt.plot(
-            np.array(field_positions) * 1e6,
-            abs(field_values) ** 2
-            / np.max(abs(field_values) ** 2)
+            np.array(field_position_arr) * 1e6,
+            abs(field_values_arr) ** 2
+            / np.max(abs(field_values_arr) ** 2)
             * np.max(np.real(n_field_arr)),
             color="tab:red",
             label="$|E|^2$",
@@ -174,15 +214,15 @@ def calculate_electrical_field(
         # investigate forward and backward field for consistency
         # plot needs to be normed to T and n_transmission, because initial condition was vec = [1, 0] but now should be [T/n, 0]
         plt.plot(
-            field_positions, S_forward * T / n_transmission.real, label="S_forward"
+            field_position_arr, S_forward * T / n_transmission.real, label="S_forward"
         )
         plt.plot(
-            field_positions, S_backward * T / n_transmission.real, label="S_backward"
+            field_position_arr, S_backward * T / n_transmission.real, label="S_backward"
         )
 
         # check for energy conservation
         plt.plot(
-            field_positions,
+            field_position_arr,
             (S_forward - S_backward) * T / n_transmission.real,
             label="S_forward - S_backward",
         )
@@ -192,7 +232,7 @@ def calculate_electrical_field(
         plt.axhline(T, linestyle=":", label="T", color="tab:blue")
         plt.axhline(R + T, linestyle=":", label="R+T", color="black")
         plt.plot(
-            field_positions,
+            field_position_arr,
             np.real(n_field_arr) / np.max(np.real(n_field_arr)),
             alpha=0.3,
         )
@@ -206,4 +246,4 @@ def calculate_electrical_field(
         # plt.plot(structure_interpolated["position"], structure_interpolated["n"], alpha=0.3)
         # plt.show()
 
-    return field_positions, field_values, n_field_arr
+    return field_properties_results

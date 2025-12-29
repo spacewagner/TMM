@@ -19,7 +19,11 @@ from TMM.structure_builder import (
 from TMM.field_solver import calculate_optical_properties
 from TMM.optics_utils import R_theoretical
 
-from TMM.analysis import analyse_electrical_field, analyse_DBR
+from TMM.analysis import (
+    analyse_electrical_field,
+    analyse_DBR,
+    analyse_reflectivity_tuning,
+)
 
 # %%
 
@@ -40,28 +44,14 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
 )
 
 # Build DBR structure
-DBR = build_DBR_structure(
-    GaAs, AlAs, 20.5, target_wavelength, n_substrate=GaAs, n_air=1
-)
+DBR = build_DBR_structure(GaAs, AlAs, 21.5, target_wavelength, n_substrate=3.3, n_air=1)
 
 # Plot the DBR structure
 plot_structure(DBR)
 
 # run full analysis on the DBR
-(
-    DBR_r_arr,
-    DBR_t_arr,
-    DBR_phase_arr,
-    DBR_r_at_target,
-    DBR_phase_at_target,
-    DBR_stopband_width,
-    DBR_field_positions,
-    DBR_field_values,
-    DBR_n_field_arr,
-    l_eff,
-    interface_position,
-) = analyse_DBR(DBR, target_wavelength, wavelength_arr)
-
+DBR_results = analyse_DBR(DBR, target_wavelength, wavelength_arr)
+DBR_results.l_eff
 # %%
 
 """
@@ -71,19 +61,10 @@ Flip the structure to imitate incident wave from the opposite side.
 
 DBR_flipped = flip_structure(DBR)
 
-(
-    DBR_r_arr,
-    DBR_t_arr,
-    DBR_phase_arr,
-    DBR_r_at_target,
-    DBR_phase_at_target,
-    DBR_stopband_width,
-    DBR_field_positions,
-    DBR_field_values,
-    DBR_n_field_arr,
-    l_eff,
-    interface_position,
-) = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
+DBR_flipped_results = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
+
+# %% Reflectivity tuning
+analyse_reflectivity_tuning(DBR, target_wavelength)
 
 # %%
 
@@ -96,9 +77,7 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
     target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
 )
 
-wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
-    DBR, wavelength_arr
-)
+DBR_optical_properties_result = calculate_optical_properties(DBR, wavelength_arr)
 
 # %%
 
@@ -107,8 +86,8 @@ Calculate electrical field distribution.
 
 """
 
-field_positions, field_values, n_field_arr, Gamma_z, internal_loss = (
-    analyse_electrical_field(DBR, target_wavelength)
+DBR_flipped_field_properties_results = analyse_electrical_field(
+    DBR_flipped, target_wavelength
 )
 
 # %% Reflectivity over N for even amount of layers
@@ -122,11 +101,11 @@ R_arr_even = []
 for N in range(25):
     N += 1
     DBR = build_DBR_structure(n1, n2, N, target_wavelength)
-    wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
+    DBR_optical_properties_result = calculate_optical_properties(
         DBR, wavelength_arr, Plot=False
     )
     N_arr_even.append(N)
-    R_arr_even.append(max(r_arr))
+    R_arr_even.append(max(DBR_optical_properties_result.R_arr))
 
 plt.plot(N_arr_even, R_arr_even, label="Result", linestyle="", marker=".")
 R_theory_even = [R_theoretical(N, n1, n2, 3.52, 1) for N in N_arr_even]
@@ -150,11 +129,11 @@ for N in range(25):
     N += 1.0  # to skip N = 0
     N += 0.5  # for uneven
     DBR = build_DBR_structure(2.95, 3.52, N, target_wavelength)
-    wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
+    DBR_optical_properties_result = calculate_optical_properties(
         DBR, wavelength_arr, Plot=False
     )
     N_arr_odd.append(N)
-    R_arr_odd.append(max(r_arr))
+    R_arr_odd.append(max(DBR_optical_properties_result.R_arr))
 
 plt.plot(N_arr_odd, R_arr_odd, label="Result", linestyle="", marker=".")
 R_theory_odd = [R_theoretical(N, 2.95, 3.52, 3.52, 1) for N in N_arr_odd]

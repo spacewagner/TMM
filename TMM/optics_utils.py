@@ -54,34 +54,6 @@ def transfer_matrix_layer(n: complex, d: float, wavelength: float) -> np.ndarray
     return np.array([[np.exp(-1j * phi), 0.0], [0.0, np.exp(1j * phi)]], dtype=complex)
 
 
-# def transfer_matrix(structure, wavelength):
-#     """
-
-#     Compute the total transfer matrix for a stacked structure. Scheme described in Coldren Example 3.1
-
-#     """
-#     M_total = np.eye(2, dtype=complex)
-
-#     # go backwards through structure
-#     for i in range(len(structure) - 1, -1, -1):
-
-#         n = structure.iloc[i]["n"]
-#         d = structure.iloc[i]["d"]
-
-#         # Layer propagation
-#         P = transfer_matrix_layer(n, d, wavelength)
-#         M_total = P @ M_total
-
-#         # Interface to previous layer, from end to start position
-#         if i > 0:
-#             n_previous = structure.iloc[i - 1]["n"]
-#             T_n_previous_n = transfer_matrix_interface(n_previous, n)
-#             M_total = T_n_previous_n @ M_total
-
-#     return M_total
-
-
-# This way it will calculate from Surface to interface
 def transfer_matrix(structure, wavelength):
     """
 
@@ -178,6 +150,7 @@ def DBR_stopband_width():
 def DBR_penetration_depth(n1, n2, R, target_wavelength):
     """
     Michalzik eq. 2.5
+    Valid only for incident from high-index material
     """
     delta_n = abs(n1 - n2)
     kappa = 2 * delta_n / target_wavelength

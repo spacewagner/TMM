@@ -3,32 +3,29 @@
 
 TODO
 
-need to be adjusted:
-analyse_DBR
-analyse_VCSELs_DBR
-analyse_VCSEL
-
 High-level analysis routines for VCSELs and DBRs.
 
 analyse_AR_coating: apply coating layer on top of structure and evaluate optical properties
 analyse_etching: apply coating layer on top of structure and evaluate optical properties
 analyse_lifetime_tuning: combine analyse_AR_coating and analyse_etching
 
-
 analyse_cavity_dip: evaluates resonant wavelength and resonator quality as well as gain
 calculate_temperature_shift: show how cavity wavelength shifts for a given temperature coefficient
 
 analyse_VCSELs_DBRs: extracts DBRs from VCSEL structure and evaluates their optical properties
 analyse_VCSEL: full analysis of VCSEL structure with the methods above, this should be the main method to use
-
+analyse_VCSEL_lifetime_tuning: analyse Top DBR reflectivity tuning by etch and coating, as well as influence on mirrorloss and photon lifetime
 
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 import time
 from scipy import constants as const
+from dataclasses import dataclass
+from typing import Tuple, List, Optional
 
 from TMM.optics_utils import (
     wavelength_to_frequency,
@@ -55,18 +52,27 @@ from TMM.structure_builder import (
     flip_structure,
 )
 
+from TMM.outputs import (
+    plot_analyse_VCSEL_lifetime_tuning,
+    print_analyse_VCSEL_lifetime_tuning,
+    plot_analyse_VCSEL,
+)
+
 
 def analyse_electrical_field(structure, target_wavelength, Print=True, Plot=True):
 
-    field_positions, field_values, n_field_arr = calculate_electrical_field(
+    structure_field_properties_results = calculate_electrical_field(
         structure, target_wavelength, Plot=Plot
     )
 
-    field_positions = np.array(field_positions)
-    n_field_arr = np.array(n_field_arr)
-
-    integral_full_real = np.sum(np.real(n_field_arr) * np.abs(field_values) ** 2)
-    integral_full_imaginary = np.sum(np.imag(n_field_arr) * np.abs(field_values) ** 2)
+    integral_full_real = np.sum(
+        np.real(structure_field_properties_results.n_field_arr)
+        * np.abs(structure_field_properties_results.field_values_arr) ** 2
+    )
+    integral_full_imaginary = np.sum(
+        np.imag(structure_field_properties_results.n_field_arr)
+        * np.abs(structure_field_properties_results.field_values_arr) ** 2
+    )
     alpha_i = coextinction_to_loss(integral_full_imaginary)
 
     Gamma_z = 0.0
@@ -77,11 +83,13 @@ def analyse_electrical_field(structure, target_wavelength, Print=True, Plot=True
         cavity_d = float(structure.loc[structure["name"] == "Cavity", "d"].iloc[0])
         cavity_stop = cavity_start + cavity_d
 
-        mask_cavity = (field_positions >= cavity_start) & (
-            field_positions <= cavity_stop
-        )
+        mask_cavity = (
+            structure_field_properties_results.field_positions_arr >= cavity_start
+        ) & (structure_field_properties_results.field_positions_arr <= cavity_stop)
         integral_cavity = np.sum(
-            np.real(n_field_arr[mask_cavity]) * np.abs(field_values[mask_cavity]) ** 2
+            np.real(structure_field_properties_results.n_field_arr[mask_cavity])
+            * np.abs(structure_field_properties_results.field_values_arr[mask_cavity])
+            ** 2
         )
         Gamma_z = (
             float(integral_cavity / integral_full_real)
@@ -89,12 +97,24 @@ def analyse_electrical_field(structure, target_wavelength, Print=True, Plot=True
             else 0.0
         )
 
+    structure_field_properties_results.alpha_i = alpha_i
+    structure_field_properties_results.Gamma_z = Gamma_z
+
     if Print:
         print("=" * 60 + "\nElectrical Field Analysis \n" + "=" * 60)
         print(f"Mode confinement Gamma_z: {Gamma_z:.4f}")
         print(f"Internal loss: {alpha_i*1e-2:.5f} /cm")
 
-    return field_positions, field_values, n_field_arr, Gamma_z, alpha_i
+    return structure_field_properties_results
+
+
+@dataclass
+class TuningProperties:
+    d_arr: np.ndarray
+    R_arr: np.ndarray
+    R_tuning_range: float
+
+    n_coating: Optional[float] = None
 
 
 def analyse_AR_coating(
@@ -109,14 +129,18 @@ def analyse_AR_coating(
         M = transfer_matrix(structure_AR, target_wavelength)
         R_arr.append(calculate_reflectivity(M))
 
+    R_tuning_range = max(R_arr) - min(R_arr)
+    R_arr = np.array(R_arr)
+    structure_coating_properties = TuningProperties(
+        d_coating_arr, R_arr, R_tuning_range, n_coating
+    )
+
     if Plot:
         plt.plot(d_coating_arr * 1e9, R_arr)
         plt.xlabel("Deposition Thickness (nm)")
         plt.ylabel("Reflectivity")
 
-    R_tuning_range = max(R_arr) - min(R_arr)
-
-    return d_coating_arr, R_arr, R_tuning_range
+    return structure_coating_properties
 
 
 def analyse_etching(structure, target_wavelength, resolution=1e-9, Plot=True):
@@ -133,13 +157,30 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, Plot=True):
     top_layer_d = structure.iloc[-2]["d"]
     top_layer_d_idx = np.argmin(abs(d_etch_arr - top_layer_d))
     R_tuning_range = abs(R_arr[top_layer_d_idx] - R_arr[0])
+    R_arr = np.array(R_arr)
+    structure_etch_properties = TuningProperties(d_etch_arr, R_arr, R_tuning_range)
 
     if Plot:
         plt.plot(d_etch_arr * 1e9, R_arr)
         plt.xlabel("Etch Depth (nm)")
         plt.ylabel("Reflectivity")
 
-    return d_etch_arr, R_arr, R_tuning_range
+    return structure_etch_properties
+
+
+@dataclass
+class CavityProperties:
+    wavelength_arr: np.ndarray
+    T_arr: np.ndarray
+    resonance_wavelength: float
+    resonance_R: float
+    gain: float
+    FWHM: float
+    Q_factor: float
+    photon_lifetime: float
+    halfmax: float
+    hw_start: float
+    hw_stop: float
 
 
 def analyse_cavity_dip(
@@ -196,6 +237,20 @@ def analyse_cavity_dip(
     f, omega = wavelength_to_frequency(target_wavelength, 1.0)
     cavity_lifetime = Q_factor / omega if np.isfinite(Q_factor) else np.inf
 
+    cavity_properties_result = CavityProperties(
+        wavelength_arr_ROI,
+        t_arr_ROI_leveled,
+        cavity_resonance_wavelength,
+        cavity_resonance_reflectivity,
+        cavity_gain,
+        FWHM,
+        Q_factor,
+        cavity_lifetime,
+        halfmax,
+        hw_start,
+        hw_stop,
+    )
+
     if Plot:
         plt.plot(wavelength_arr_ROI * 1e9, t_arr_ROI_leveled, label="T (leveled)")
         plt.axvline(
@@ -210,9 +265,9 @@ def analyse_cavity_dip(
             hw_start * 1e9,
             hw_stop * 1e9,
             color="red",
-            label=f"FWHM: {FWHM*1e9:.2f}",
+            label=f"FWHM: {FWHM*1e9:.2f}nm \n $\\tau_p$: {cavity_lifetime*1e12:.2f}ps",
         )
-
+        plt.tick_params(axis="x", rotation=45)
         plt.xlabel("Wavelength (nm)")
         plt.legend()
         plt.grid(alpha=0.3)
@@ -227,19 +282,21 @@ def analyse_cavity_dip(
         print(f"FWHM: {FWHM*1e9:.4f} nm -> Q: {Q_factor:.2f}")
         print(f"Photon lifetime: {cavity_lifetime*1e12:.2f} ps")
 
-    return (
-        wavelength_arr_ROI,
-        t_arr_ROI_leveled,
-        cavity_resonance_wavelength,
-        cavity_resonance_reflectivity,
-        cavity_gain,
-        FWHM,
-        Q_factor,
-        cavity_lifetime,
-        halfmax,
-        hw_start,
-        hw_stop,
-    )
+    return cavity_properties_result
+
+
+@dataclass
+class TemperatureProperties:
+
+    target_wavelength: float
+    temperature_arr: np.ndarray
+    temperature_coefficent: float
+    wavelength_T_theory_arr: np.ndarray
+
+    cavity_resonance_arr: np.ndarray
+    wavelength_arr_arr: list
+    r_arr_arr: list
+    wavelength_tuning_range: float
 
 
 def calculate_temperature_shift(
@@ -275,36 +332,38 @@ def calculate_temperature_shift(
             mesh_size=0.01e-9,
         )
 
-        wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
+        VCSEL_optical_properties_result = calculate_optical_properties(
             VCSEL_T, wavelength_arr, Plot=False
         )
 
-        (
-            wavelength_arr_ROI,
-            t_arr_ROI_leveled,
-            cavity_resonance_wavelength,
-            cavity_resonance_reflectivity,
-            cavity_gain,
-            FWHM,
-            Q_factor,
-            cavity_lifetime,
-            halfmax,
-            hw_start,
-            hw_stop,
-        ) = analyse_cavity_dip(
+        cavity_properties_result = analyse_cavity_dip(
             wavelength_arr,
-            r_arr,
-            t_arr,
+            VCSEL_optical_properties_result.R_arr,
+            VCSEL_optical_properties_result.T_arr,
             wavelength_T,
             fine_range,
             Plot=False,
             Print=False,
         )
-        cavity_resonance_arr.append(cavity_resonance_wavelength)
-        r_arr_arr.append(r_arr)
+        cavity_resonance_arr.append(cavity_properties_result.resonance_wavelength)
+        r_arr_arr.append(VCSEL_optical_properties_result.R_arr)
         wavelength_arr_arr.append(wavelength_arr)
 
-    wavelength_tuning_range = max(cavity_resonance_arr) - min(cavity_resonance_arr)
+    cavity_resonance_arr = np.array(cavity_resonance_arr)
+    wavelength_tuning_range = np.max(cavity_resonance_arr) - np.min(
+        cavity_resonance_arr
+    )
+
+    results = TemperatureProperties(
+        target_wavelength=target_wavelength,
+        temperature_arr=T_arr,
+        temperature_coefficent=temperature_coefficent,
+        wavelength_T_theory_arr=wavelength_T_theory_arr,
+        cavity_resonance_arr=cavity_resonance_arr,
+        wavelength_arr_arr=wavelength_arr_arr,
+        r_arr_arr=r_arr_arr,
+        wavelength_tuning_range=wavelength_tuning_range,
+    )
 
     if Plot:
 
@@ -345,27 +404,22 @@ def calculate_temperature_shift(
             f"Wavelength tuning range over 300K-400K: {wavelength_tuning_range*1e9:.1f} nm"
         )
 
-    return (
-        T_arr,
-        wavelength_T_theory_arr,
-        wavelength_arr_arr,
-        cavity_resonance_arr,
-        temperature_coefficent,
-    )
+    return results
 
 
 def analyse_reflectivity_tuning(
     structure, target_wavelength, n_coating=1.45, resolution=1e-9, Plot=True, Print=True
 ):
 
-    d_coating_arr, R_coating_arr, R_coating_tuning_range = analyse_AR_coating(
+    structure_coating_properties = analyse_AR_coating(
         structure,
         target_wavelength,
         n_coating=n_coating,
         resolution=resolution,
         Plot=False,
     )
-    d_etch_arr, R_etch_arr, R_etch_tuning_range = analyse_etching(
+
+    structure_etching_properties = analyse_etching(
         structure, target_wavelength, resolution=resolution, Plot=False
     )
 
@@ -376,20 +430,27 @@ def analyse_reflectivity_tuning(
         DBR_n1 = structure.iloc[-2]["n"]
         DBR_n2 = structure.iloc[-3]["n"]
 
-        plt.plot(-1 * d_etch_arr * 1e9, R_etch_arr)
-        plt.plot(d_coating_arr * 1e9, R_coating_arr, color="tab:blue")
+        plt.plot(
+            -1 * structure_etching_properties.d_arr * 1e9,
+            structure_etching_properties.R_arr,
+        )
+        plt.plot(
+            structure_coating_properties.d_arr * 1e9,
+            structure_coating_properties.R_arr,
+            color="tab:blue",
+        )
 
         plt.axvline(0, color="tab:red")
 
         plt.axvspan(
-            d_coating_arr[0] * 1e9,
-            d_coating_arr[-1] * 1e9,
+            structure_coating_properties.d_arr[0] * 1e9,
+            structure_coating_properties.d_arr[-1] * 1e9,
             alpha=0.2,
             color="tab:green",
             label="AR Coating",
         )
 
-        start_position = d_etch_arr[0]
+        start_position = structure_etching_properties.d_arr[0]
         label = None
         for i in range(2):
 
@@ -425,18 +486,31 @@ def analyse_reflectivity_tuning(
     if Print:
 
         print("=" * 60 + "\nLifetime Tuning Analysis \n" + "=" * 60)
-        print(f"R tuning range by AR coating: {R_coating_tuning_range:.4f}")
-        print(f"R tuning range by etching: {R_etch_tuning_range:.4f}")
+        print(
+            f"R tuning range by AR coating: {structure_coating_properties.R_tuning_range:.4f}"
+        )
+        print(
+            f"R tuning range by etching: {structure_etching_properties.R_tuning_range:.4f}"
+        )
 
-    return (
-        d_coating_arr,
-        R_coating_arr,
-        R_coating_tuning_range,
-        n_coating,
-        d_etch_arr,
-        R_etch_arr,
-        R_etch_tuning_range,
-    )
+    return structure_coating_properties, structure_etching_properties
+
+
+@dataclass
+class DBR_Properties:
+    DBR: pd.DataFrame
+    target_wavelength: float
+    wavelength_arr: np.ndarray
+    R_arr: np.ndarray
+    T_arr: np.ndarray
+    phase_arr: np.ndarray
+    idx_at_target: int
+    stopband_width: float
+    field_positions_arr: np.ndarray
+    field_values_arr: np.ndarray
+    n_field_arr: np.ndarray
+    l_eff: float
+    interface_position: float
 
 
 def analyse_DBR(
@@ -457,20 +531,24 @@ def analyse_DBR(
     Calculate penetration depth michalzik eq. 2.5
     """
 
-    wavelength_arr, DBR_r_arr, DBR_t_arr, DBR_phase_arr = calculate_optical_properties(
+    DBR_optical_properties_result = calculate_optical_properties(
         DBR, wavelength_arr, Plot=Plot
     )
 
-    DBR_field_positions, DBR_field_values, DBR_n_field_arr = calculate_electrical_field(
+    DBR_field_properties_results = calculate_electrical_field(
         DBR, target_wavelength, Plot=False
     )
 
     idx_target = np.argmin(np.abs(wavelength_arr - target_wavelength))
-    DBR_r_at_target = DBR_r_arr[idx_target]
-    DBR_phase_at_target = DBR_phase_arr[idx_target]
+    DBR_r_at_target = DBR_optical_properties_result.R_arr[idx_target]
+    DBR_phase_at_target = DBR_optical_properties_result.phase_arr[idx_target]
 
-    idx_left = np.where(DBR_r_arr >= DBR_r_at_target * 0.99)[0][0]
-    idx_right = np.where(DBR_r_arr >= DBR_r_at_target * 0.99)[0][-1]
+    idx_left = np.where(DBR_optical_properties_result.R_arr >= DBR_r_at_target * 0.99)[
+        0
+    ][0]
+    idx_right = np.where(DBR_optical_properties_result.R_arr >= DBR_r_at_target * 0.99)[
+        0
+    ][-1]
     DBR_stopband_width = wavelength_arr[idx_right] - wavelength_arr[idx_left]
 
     n1 = DBR.loc[(DBR["name"] == "DBR_1")]["n"].values[0]
@@ -478,13 +556,29 @@ def analyse_DBR(
     l_eff = DBR_penetration_depth(n1, n2, DBR_r_at_target, target_wavelength)
     interface_position = DBR.iloc[-1]["position"]
 
+    results = DBR_Properties(
+        DBR=DBR,
+        target_wavelength=target_wavelength,
+        wavelength_arr=wavelength_arr,
+        R_arr=DBR_optical_properties_result.R_arr,
+        T_arr=DBR_optical_properties_result.T_arr,
+        phase_arr=DBR_optical_properties_result.phase_arr,
+        idx_at_target=int(idx_target),
+        stopband_width=DBR_stopband_width,
+        field_positions_arr=DBR_field_properties_results.field_positions_arr,
+        field_values_arr=DBR_field_properties_results.field_values_arr,
+        n_field_arr=DBR_field_properties_results.n_field_arr,
+        l_eff=l_eff,
+        interface_position=interface_position,
+    )
+
     if Plot:
         plot_structure(DBR)
         plt.plot(
-            np.array(DBR_field_positions) * 1e6,
-            abs(DBR_field_values) ** 2
-            / np.max(abs(DBR_field_values) ** 2)
-            * np.max(DBR_n_field_arr),
+            np.array(DBR_field_properties_results.field_positions_arr) * 1e6,
+            abs(DBR_field_properties_results.field_values_arr) ** 2
+            / np.max(abs(DBR_field_properties_results.field_values_arr) ** 2)
+            * np.max(DBR_field_properties_results.n_field_arr),
             color="tab:red",
             label="$|E|^2$",
         )
@@ -496,12 +590,12 @@ def analyse_DBR(
         )
         plt.legend()
         plt.show()
-        plt.plot(wavelength_arr * 1e9, DBR_r_arr)
-        plt.plot(wavelength_arr * 1e9, DBR_t_arr)
+        plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.R_arr)
+        plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.T_arr)
         plt.xlabel("Wavelength (nm)")
         plt.ylabel("Reflectivity")
         plt.show()
-        plt.plot(wavelength_arr * 1e9, DBR_phase_arr)
+        plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.phase_arr)
         plt.xlabel("Wavelength (nm)")
         plt.ylabel("Phase")
         plt.legend()
@@ -516,19 +610,44 @@ def analyse_DBR(
         print(f"DBR stopband width: {DBR_stopband_width*1e9:.2f} nm")
         print(f"DBR effective penetration depth: {l_eff*1e6:.3f} um")
 
-    return (
-        DBR_r_arr,
-        DBR_t_arr,
-        DBR_phase_arr,
-        DBR_r_at_target,
-        DBR_phase_at_target,
-        DBR_stopband_width,
-        DBR_field_positions,
-        DBR_field_values,
-        DBR_n_field_arr,
-        l_eff,
-        interface_position,
-    )
+    return results
+
+
+@dataclass
+class VCSELs_DBR_Properties:
+
+    DBR_top: pd.DataFrame
+    DBR_bottom: pd.DataFrame
+
+    target_wavelength: float
+    wavelength_arr: np.ndarray
+
+    R_top_arr: np.ndarray
+    T_top_arr: np.ndarray
+    phase_top_arr: np.ndarray
+    idx_at_target_top: int
+    stopband_width_top: float
+    field_positions_top_arr: np.ndarray
+    field_values_top_arr: np.ndarray
+    n_field_top_arr: np.ndarray
+    l_eff_top: float
+    interface_position_top: float
+
+    R_bottom_arr: np.ndarray
+    T_bottom_arr: np.ndarray
+    phase_bottom_arr: np.ndarray
+    idx_at_target_bottom: int
+    stopband_width_bottom: float
+    field_positions_bottom_arr: np.ndarray
+    field_values_bottom_arr: np.ndarray
+    n_field_bottom_arr: np.ndarray
+    l_eff_bottom: float
+    interface_position_bottom: float
+
+    L_eff: float
+    alpha_m: float
+    v_gr: float
+    photon_lifetime: float
 
 
 def analyse_VCSELs_DBRs(
@@ -576,40 +695,22 @@ def analyse_VCSELs_DBRs(
     # Top DBR needs to be flipped, since incident wave is coming from bottom side, not top side
     DBR_top = flip_structure(DBR_top)
 
-    (
-        DBR_bottom_r_arr,
-        DBR_bottom_t_arr,
-        DBR_bottom_phase_arr,
-        DBR_bottom_r_at_target,
-        DBR_bottom_phase_at_target,
-        DBR_bottom_stopband_width,
-        DBR_bottom_field_positions,
-        DBR_bottom_field_values,
-        DBR_bottom_n_field_arr,
-        DBR_bottom_l_eff,
-        DBR_bottom_interface_position,
-    ) = analyse_DBR(
+    DBR_Bottom_properties = analyse_DBR(
         DBR_bottom, target_wavelength, wavelength_arr, Plot=False, Print=False
     )
 
-    (
-        DBR_top_r_arr,
-        DBR_top_t_arr,
-        DBR_top_phase_arr,
-        DBR_top_r_at_target,
-        DBR_top_phase_at_target,
-        DBR_top_stopband_width,
-        DBR_top_field_positions,
-        DBR_top_field_values,
-        DBR_top_n_field_arr,
-        DBR_top_l_eff,
-        DBR_top_interface_position,
-    ) = analyse_DBR(DBR_top, target_wavelength, wavelength_arr, Plot=False, Print=False)
+    DBR_Top_properties = analyse_DBR(
+        DBR_top, target_wavelength, wavelength_arr, Plot=False, Print=False
+    )
 
     n_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["n"].values[0]
     L_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["d"].values[0]
-    L_eff = L_cavity + DBR_bottom_l_eff + DBR_top_l_eff
-    alpha_m = VCSEL_mirror_loss(L_eff, DBR_top_r_at_target, DBR_bottom_r_at_target)
+    L_eff = L_cavity + DBR_Bottom_properties.l_eff + DBR_Top_properties.l_eff
+    alpha_m = VCSEL_mirror_loss(
+        L_eff,
+        DBR_Top_properties.R_arr[DBR_Top_properties.idx_at_target],
+        DBR_Bottom_properties.R_arr[DBR_Bottom_properties.idx_at_target],
+    )
 
     DBR_bottom_n1 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_1")]["n"].values[0]
     DBR_bottom_n2 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_2")]["n"].values[0]
@@ -629,8 +730,8 @@ def analyse_VCSELs_DBRs(
 
     n_cavity_eff = (
         n_cavity * L_cavity
-        + DBR_bottom_n_eff * DBR_bottom_l_eff
-        + DBR_top_n_eff * DBR_top_l_eff
+        + DBR_bottom_n_eff * DBR_Bottom_properties.l_eff
+        + DBR_top_n_eff * DBR_Top_properties.l_eff
     ) / L_eff
 
     v_gr = const.c / n_cavity_eff
@@ -638,6 +739,37 @@ def analyse_VCSELs_DBRs(
     photon_lifetime = VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i)
 
     DBR_top_total_length = DBR_top.iloc[-1]["position"] + DBR_top.iloc[-1]["d"]
+
+    results = VCSELs_DBR_Properties(
+        DBR_top=DBR_top,
+        DBR_bottom=DBR_bottom,
+        target_wavelength=target_wavelength,
+        wavelength_arr=wavelength_arr,
+        R_top_arr=DBR_Top_properties.R_arr,
+        T_top_arr=DBR_Top_properties.T_arr,
+        phase_top_arr=DBR_Top_properties.phase_arr,
+        idx_at_target_top=DBR_Top_properties.idx_at_target,
+        stopband_width_top=DBR_Top_properties.stopband_width,
+        field_positions_top_arr=DBR_Top_properties.field_positions_arr,
+        field_values_top_arr=DBR_Top_properties.field_values_arr,
+        n_field_top_arr=DBR_Top_properties.n_field_arr,
+        l_eff_top=DBR_Top_properties.l_eff,
+        interface_position_top=DBR_Top_properties.interface_position,
+        R_bottom_arr=DBR_Bottom_properties.R_arr,
+        T_bottom_arr=DBR_Bottom_properties.T_arr,
+        phase_bottom_arr=DBR_Bottom_properties.phase_arr,
+        idx_at_target_bottom=DBR_Bottom_properties.idx_at_target,
+        stopband_width_bottom=DBR_Bottom_properties.stopband_width,
+        field_positions_bottom_arr=DBR_Bottom_properties.field_positions_arr,
+        field_values_bottom_arr=DBR_Bottom_properties.field_values_arr,
+        n_field_bottom_arr=DBR_Bottom_properties.n_field_arr,
+        l_eff_bottom=DBR_Bottom_properties.l_eff,
+        interface_position_bottom=DBR_Bottom_properties.interface_position,
+        L_eff=L_eff,
+        alpha_m=alpha_m,
+        v_gr=v_gr,
+        photon_lifetime=photon_lifetime,
+    )
 
     if Plot:
 
@@ -647,24 +779,28 @@ def analyse_VCSELs_DBRs(
         ax1 = plt.subplot(2, 2, 1)  # Span column 1 of row 1
 
         ax1.plot(
-            np.array(DBR_bottom_field_positions) * 1e6,
-            np.real(DBR_bottom_n_field_arr),
+            DBR_Bottom_properties.field_positions_arr * 1e6,
+            np.real(DBR_Bottom_properties.n_field_arr),
             label="n(z)",
         )
         ax1.plot(
-            np.array(DBR_bottom_field_positions) * 1e6,
-            abs(DBR_bottom_field_values) ** 2
-            / np.max(abs(DBR_bottom_field_values) ** 2)
-            * np.max(DBR_bottom_n_field_arr),
+            DBR_Bottom_properties.field_positions_arr * 1e6,
+            abs(DBR_Bottom_properties.field_values_arr) ** 2
+            / np.max(abs(DBR_Bottom_properties.field_values_arr) ** 2)
+            * np.max(DBR_Bottom_properties.n_field_arr),
             color="tab:red",
             label="$norm. |E|^2$",
         )
         ax1.axvline(
-            (DBR_bottom_interface_position - DBR_bottom_l_eff) * 1e6,
+            (DBR_Bottom_properties.interface_position - DBR_Bottom_properties.l_eff)
+            * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_bottom_l_eff*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Bottom_properties.l_eff*1e6:.2f}$\\mu m$ ",
         )
+        ax1.minorticks_on()
+        ax1.grid(which="both", linestyle="--", linewidth=0.5)
+        ax1.tick_params(direction="in", which="both", top=True, right=True)
         ax1.autoscale(enable=True, axis="x", tight=True)
         ax1.autoscale(enable=True, axis="y", tight=True)
         ax1.set_xlabel("Position (um)")
@@ -674,26 +810,34 @@ def analyse_VCSELs_DBRs(
         ax2 = plt.subplot(2, 2, 2)
 
         ax2.plot(
-            np.array(DBR_top_field_positions) * 1e6,
-            np.flip(np.real(DBR_top_n_field_arr)),
+            DBR_Top_properties.field_positions_arr * 1e6,
+            np.flip(np.real(DBR_Top_properties.n_field_arr)),
             label="n(z)",
         )
         ax2.plot(
-            np.array(DBR_top_field_positions) * 1e6,
+            DBR_Top_properties.field_positions_arr * 1e6,
             np.flip(
-                abs(DBR_top_field_values) ** 2
-                / np.max(abs(DBR_top_field_values) ** 2)
-                * np.max(DBR_top_n_field_arr)
+                abs(DBR_Top_properties.field_values_arr) ** 2
+                / np.max(abs(DBR_Top_properties.field_values_arr) ** 2)
+                * np.max(DBR_Top_properties.n_field_arr)
             ),
             color="tab:red",
             label="$norm. |E|^2$",
         )
         ax2.axvline(
-            (DBR_top_total_length - DBR_top_interface_position + DBR_top_l_eff) * 1e6,
+            (
+                DBR_top_total_length
+                - DBR_Top_properties.interface_position
+                + DBR_Top_properties.l_eff
+            )
+            * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_top_l_eff*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Top_properties.l_eff*1e6:.2f}$\\mu m$ ",
         )
+        ax2.minorticks_on()
+        ax2.grid(which="both", linestyle="--", linewidth=0.5)
+        ax2.tick_params(direction="in", which="both", top=True, right=True)
         ax2.autoscale(enable=True, axis="x", tight=True)
         ax2.autoscale(enable=True, axis="y", tight=True)
         ax2.set_xlabel("Position (um)")
@@ -703,14 +847,17 @@ def analyse_VCSELs_DBRs(
         ax3 = plt.subplot(2, 2, 3)
         ax3.plot(
             wavelength_arr * 1e9,
-            DBR_bottom_r_arr,
-            label=f"$DBR_B$ {DBR_bottom_r_at_target:.5}",
+            DBR_Bottom_properties.R_arr,
+            label=f"$DBR_B$ {DBR_Bottom_properties.R_arr[DBR_Bottom_properties.idx_at_target]:.5}",
         )
         ax3.plot(
             wavelength_arr * 1e9,
-            DBR_top_r_arr,
-            label=f"$DBR_T$: {DBR_top_r_at_target:.5}",
+            DBR_Top_properties.R_arr,
+            label=f"$DBR_T$: {DBR_Top_properties.R_arr[DBR_Top_properties.idx_at_target]:.5}",
         )
+        ax3.minorticks_on()
+        ax3.grid(which="both", linestyle="--", linewidth=0.5)
+        ax3.tick_params(direction="in", which="both", top=True, right=True)
         ax3.autoscale(enable=True, axis="x", tight=True)
         ax3.set_ylim(0, 1)
         ax3.set_xlabel("Wavelength (nm)")
@@ -718,8 +865,13 @@ def analyse_VCSELs_DBRs(
         ax3.legend()
 
         ax4 = plt.subplot(2, 2, 4)
-        ax4.plot(wavelength_arr * 1e9, DBR_bottom_phase_arr, label="Bottom DBR")
-        ax4.plot(wavelength_arr * 1e9, DBR_top_phase_arr, label="Top DBR")
+        ax4.plot(
+            wavelength_arr * 1e9, DBR_Bottom_properties.phase_arr, label="Bottom DBR"
+        )
+        ax4.plot(wavelength_arr * 1e9, DBR_Top_properties.phase_arr, label="Top DBR")
+        ax4.minorticks_on()
+        ax4.grid(which="both", linestyle="--", linewidth=0.5)
+        ax4.tick_params(direction="in", which="both", top=True, right=True)
         ax4.autoscale(enable=True, axis="x", tight=True)
         ax4.set_ylim(-np.pi, np.pi)
         ax4.set_xlabel("Wavelength (nm)")
@@ -738,43 +890,123 @@ def analyse_VCSELs_DBRs(
 
         print("=" * 60 + "\nDBR Analysis \n" + "=" * 60)
         print(f"Results at target wavelength: {target_wavelength*1e9:.3f} nm")
-        print(f"Bottom DBR reflectivity: {DBR_bottom_r_at_target:.6f}")
-        print(f"Top DBR reflectivity: {DBR_top_r_at_target:.6f}")
-        print(f"Bottom DBR phase: {DBR_bottom_phase_at_target:.2f}")
-        print(f"Top DBR phase: {DBR_top_phase_at_target:.2f}")
-        print(f"Bottom DBR stopband width: {DBR_bottom_stopband_width*1e9:.2f} nm")
-        print(f"Top DBR stopband width: {DBR_top_stopband_width*1e9:.2f} nm")
-        print(f"Bottom DBR effective penetration depth: {DBR_bottom_l_eff*1e6:.3f} um")
-        print(f"Top DBR effective penetration depth: {DBR_top_l_eff*1e6:.3f} um")
+        print(
+            f"Bottom DBR reflectivity: {DBR_Bottom_properties.R_arr[DBR_Bottom_properties.idx_at_target]:.6f}"
+        )
+        print(
+            f"Top DBR reflectivity: {DBR_Top_properties.R_arr[DBR_Top_properties.idx_at_target]:.6f}"
+        )
+        print(
+            f"Bottom DBR phase: {DBR_Bottom_properties.phase_arr[DBR_Bottom_properties.idx_at_target]:.2f}"
+        )
+        print(
+            f"Top DBR phase: {DBR_Top_properties.phase_arr[DBR_Top_properties.idx_at_target]:.2f}"
+        )
+        print(
+            f"Bottom DBR stopband width: {DBR_Bottom_properties.stopband_width*1e9:.2f} nm"
+        )
+        print(f"Top DBR stopband width: {DBR_Top_properties.stopband_width*1e9:.2f} nm")
+        print(
+            f"Bottom DBR effective penetration depth: {DBR_Bottom_properties.l_eff*1e6:.3f} um"
+        )
+        print(
+            f"Top DBR effective penetration depth: {DBR_Top_properties.l_eff*1e6:.3f} um"
+        )
         print(f"Effective cavity length: {L_eff*1e6:.3f} um")
         print(f"Mirror loss: {alpha_m*1e-2:.2f} /cm")
         print(f"Internal loss (estimated): {alpha_i*1e-2:.2f} /cm")
         print(f"Group velocity in effective cavity: {v_gr:.2f} m/s")
         print(f"Estimated photon lifetime: {photon_lifetime*1e12:.2f} ps")
 
-    return (
-        DBR_bottom_r_arr,
-        DBR_bottom_t_arr,
-        DBR_bottom_phase_arr,
-        DBR_bottom_r_at_target,
-        DBR_bottom_phase_at_target,
-        DBR_bottom_stopband_width,
-        DBR_top_r_arr,
-        DBR_top_t_arr,
-        DBR_top_phase_arr,
-        DBR_top_r_at_target,
-        DBR_top_phase_at_target,
-        DBR_top_stopband_width,
-        L_eff,
-        alpha_m,
-        photon_lifetime,
-    )
+    return results
+
+
+@dataclass
+class VCSEL_Properties:
+
+    # general
+    VCSEL: pd.DataFrame
+    wavelength_arr: np.ndarray
+    target_wavelength: float
+
+    # VCSEL optical
+    VCSEL_R_arr: np.ndarray
+    VCSEL_T_arr: np.ndarray
+    VCSEL_phase_arr: np.ndarray
+
+    # VCSEL field
+    VCSEL_field_positions_arr: np.ndarray
+    VCSEL_field_values_arr: np.ndarray
+    VCSEL_n_field_arr: np.ndarray
+
+    # Cavity analysis
+    cavity_wavelength_arr: np.ndarray
+    cavity_T_arr: np.ndarray
+    cavity_resonance_wavelength: float
+    cavity_resonance_R: float
+    cavity_gain: float
+    cavity_FWHM: float
+    cavity_Q_factor: float
+    cavity_photon_lifetime: float
+    cavity_halfmax: float
+    cavity_hw_start: float
+    cavity_hw_stop: float
+
+    # DBR analysis
+    R_top_arr: np.ndarray
+    T_top_arr: np.ndarray
+    phase_top_arr: np.ndarray
+    idx_at_target_top: int
+    stopband_width_top: float
+    field_positions_top_arr: np.ndarray
+    field_values_top_arr: np.ndarray
+    n_field_top_arr: np.ndarray
+    l_eff_top: float
+    interface_position_top: float
+
+    R_bottom_arr: np.ndarray
+    T_bottom_arr: np.ndarray
+    phase_bottom_arr: np.ndarray
+    idx_at_target_bottom: int
+    stopband_width_bottom: float
+    field_positions_bottom_arr: np.ndarray
+    field_values_bottom_arr: np.ndarray
+    n_field_bottom_arr: np.ndarray
+    l_eff_bottom: float
+    interface_position_bottom: float
+
+    L_eff: float
+    alpha_m: float
+    v_gr: float
+    photon_lifetime: float
+
+    # Reflectivity Tuning
+    d_coating_arr: np.ndarray
+    R_coating_arr: np.ndarray
+    R_tuning_range_coating: float
+    n_coating: float
+
+    d_etching_arr: np.ndarray
+    R_etching_arr: np.ndarray
+    R_tuning_range_etching: float
+
+    # Temperature Tuning
+    temperature_arr: np.ndarray
+    temperature_coefficent: float
+    wavelength_T_theory_arr: np.ndarray
+
+    cavity_resonance_arr: np.ndarray
+    wavelength_arr_arr: list
+    r_arr_arr: list
+    wavelength_tuning_range: float
 
 
 def analyse_VCSEL(
     VCSEL,
     target_wavelength,
     n_coating=1.45,
+    fine_range=1e-9,
+    mesh_size=0.001e-9,
     plot_details=False,
     print_details=True,
     Save_to="pdf",
@@ -787,86 +1019,80 @@ def analyse_VCSEL(
         target_wavelength - 100e-9,
         target_wavelength + 100e-9,
         target_wavelength,
-        fine_range=5e-9,
-        mesh_size=0.01e-9,
+        fine_range=fine_range,
+        mesh_size=mesh_size,
     )
 
-    wavelength_arr, r_arr, t_arr, phase_arr = calculate_optical_properties(
+    optical_properties_result = calculate_optical_properties(
         VCSEL, wavelength_arr, Plot=plot_details
     )
-    (
-        wavelength_arr_ROI,
-        t_arr_ROI_leveled,
-        cavity_resonance_wavelength,
-        cavity_resonance_reflectivity,
-        cavity_gain,
-        FWHM,
-        Q_factor,
-        cavity_lifetime,
-        halfmax,
-        hw_start,
-        hw_stop,
-    ) = analyse_cavity_dip(
+    cavity_properties_result = analyse_cavity_dip(
         wavelength_arr,
-        r_arr,
-        t_arr,
+        optical_properties_result.R_arr,
+        optical_properties_result.T_arr,
         target_wavelength,
+        fine_range=fine_range,
         Plot=plot_details,
         Print=print_details,
     )
 
-    (
-        DBR_bottom_r_arr,
-        DBR_bottom_t_arr,
-        DBR_bottom_phase_arr,
-        DBR_bottom_r_at_target,
-        DBR_bottom_phase_at_target,
-        DBR_bottom_stopband_width,
-        DBR_top_r_arr,
-        DBR_top_t_arr,
-        DBR_top_phase_arr,
-        DBR_top_r_at_target,
-        DBR_top_phase_at_target,
-        DBR_top_stopband_width,
-        L_eff,
-        alpha_m,
-        photon_lifetime,
-    ) = analyse_VCSELs_DBRs(VCSEL, target_wavelength, wavelength_arr, Plot=False)
+    VCSELs_DBR_properties = analyse_VCSELs_DBRs(
+        VCSEL, target_wavelength, wavelength_arr, Plot=False
+    )
+
+    # VCSEL_coating_properties, VCSEL_etching_properties = analyse_reflectivity_tuning(
+    #     VCSEL,
+    #     target_wavelength,
+    #     n_coating=n_coating,
+    #     Plot=plot_details,
+    #     Print=print_details,
+    # )
 
     (
-        d_coating_arr,
-        R_coating_arr,
-        R_coating_tuning_range,
-        n_AR_coating,
-        d_etch_arr,
-        R_etch_arr,
-        R_etch_tuning_range,
-    ) = analyse_reflectivity_tuning(
-        VCSEL,
+        n_bottom_1,
+        n_bottom_2,
+        N_bottom,
+        n_top_1,
+        n_top_2,
+        N_top,
+        n_cavity,
+        n_substrate,
+        n_air,
+    ) = get_VCSEL_structure(VCSEL)
+
+    DBR_bottom = build_DBR_structure(
+        n_bottom_1, n_bottom_2, N_bottom, target_wavelength, n_substrate, n_cavity
+    )
+
+    DBR_top = build_DBR_structure(
+        n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
+    )
+
+    # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
+    DBR_top_coating_properties = analyse_AR_coating(
+        DBR_top,
         target_wavelength,
         n_coating=n_coating,
-        Plot=plot_details,
-        Print=print_details,
+        resolution=1e-9,
+        Plot=False,
+    )
+    plt.show()
+    DBR_top_etching_properties = analyse_etching(
+        DBR_top, target_wavelength, resolution=1e-9, Plot=False
     )
 
-    field_positions, field_values, n_field_arr, Gamma_z, alpha_i = (
-        analyse_electrical_field(
-            VCSEL, target_wavelength, Plot=plot_details, Print=print_details
-        )
+    VCSEL_field_properties_results = analyse_electrical_field(
+        VCSEL, target_wavelength, Plot=plot_details, Print=print_details
     )
 
-    threshold_gain = VCSEL_threshold_gain(Gamma_z, alpha_m)
+    threshold_gain = VCSEL_threshold_gain(
+        VCSEL_field_properties_results.Gamma_z, VCSELs_DBR_properties.alpha_m
+    )
     print(f"Estimated threshold gain: {threshold_gain*1e-2:.2f}/cm")
 
     T_arr = np.linspace(300, 400, 5)
 
-    (
-        T_arr,
-        wavelength_T_theory_arr,
-        wavelength_arr_arr,
-        cavity_resonance_arr,
-        temperature_coefficent,
-    ) = calculate_temperature_shift(
+    VCSEL_temperature_properties = calculate_temperature_shift(
         VCSEL,
         target_wavelength,
         T_arr,
@@ -875,195 +1101,103 @@ def analyse_VCSEL(
         Print=print_details,
     )
 
+    results = VCSEL_Properties(
+        VCSEL=VCSEL,
+        wavelength_arr=wavelength_arr,
+        target_wavelength=target_wavelength,
+        VCSEL_R_arr=optical_properties_result.R_arr,
+        VCSEL_T_arr=optical_properties_result.T_arr,
+        VCSEL_phase_arr=optical_properties_result.phase_arr,
+        VCSEL_field_positions_arr=VCSEL_field_properties_results.field_positions_arr,
+        VCSEL_field_values_arr=VCSEL_field_properties_results.field_values_arr,
+        VCSEL_n_field_arr=VCSEL_field_properties_results.n_field_arr,
+        cavity_T_arr=cavity_properties_result.T_arr,
+        cavity_wavelength_arr=cavity_properties_result.wavelength_arr,
+        cavity_resonance_wavelength=cavity_properties_result.resonance_wavelength,
+        cavity_resonance_R=cavity_properties_result.resonance_R,
+        cavity_gain=cavity_properties_result.gain,
+        cavity_FWHM=cavity_properties_result.FWHM,
+        cavity_Q_factor=cavity_properties_result.Q_factor,
+        cavity_photon_lifetime=cavity_properties_result.photon_lifetime,
+        cavity_halfmax=cavity_properties_result.halfmax,
+        cavity_hw_start=cavity_properties_result.hw_start,
+        cavity_hw_stop=cavity_properties_result.hw_stop,
+        R_top_arr=VCSELs_DBR_properties.R_top_arr,
+        T_top_arr=VCSELs_DBR_properties.T_top_arr,
+        phase_top_arr=VCSELs_DBR_properties.phase_top_arr,
+        idx_at_target_top=VCSELs_DBR_properties.idx_at_target_top,
+        stopband_width_top=VCSELs_DBR_properties.stopband_width_top,
+        field_positions_top_arr=VCSELs_DBR_properties.field_positions_top_arr,
+        field_values_top_arr=VCSELs_DBR_properties.field_values_top_arr,
+        n_field_top_arr=VCSELs_DBR_properties.n_field_top_arr,
+        l_eff_top=VCSELs_DBR_properties.l_eff_top,
+        interface_position_top=VCSELs_DBR_properties.interface_position_top,
+        R_bottom_arr=VCSELs_DBR_properties.R_bottom_arr,
+        T_bottom_arr=VCSELs_DBR_properties.T_bottom_arr,
+        phase_bottom_arr=VCSELs_DBR_properties.phase_bottom_arr,
+        idx_at_target_bottom=VCSELs_DBR_properties.idx_at_target_bottom,
+        stopband_width_bottom=VCSELs_DBR_properties.stopband_width_bottom,
+        field_positions_bottom_arr=VCSELs_DBR_properties.field_positions_bottom_arr,
+        field_values_bottom_arr=VCSELs_DBR_properties.field_values_bottom_arr,
+        n_field_bottom_arr=VCSELs_DBR_properties.n_field_bottom_arr,
+        l_eff_bottom=VCSELs_DBR_properties.l_eff_bottom,
+        interface_position_bottom=VCSELs_DBR_properties.interface_position_bottom,
+        L_eff=VCSELs_DBR_properties.L_eff,
+        alpha_m=VCSELs_DBR_properties.alpha_m,
+        v_gr=VCSELs_DBR_properties.v_gr,
+        photon_lifetime=VCSELs_DBR_properties.photon_lifetime,
+        d_coating_arr=DBR_top_coating_properties.d_arr,
+        R_coating_arr=DBR_top_coating_properties.R_arr,
+        R_tuning_range_coating=DBR_top_coating_properties.R_tuning_range,
+        n_coating=n_coating,
+        d_etching_arr=DBR_top_etching_properties.d_arr,
+        R_etching_arr=DBR_top_etching_properties.R_arr,
+        R_tuning_range_etching=DBR_top_etching_properties.R_tuning_range,
+        temperature_arr=T_arr,
+        temperature_coefficent=VCSEL_temperature_properties.temperature_coefficent,
+        wavelength_T_theory_arr=VCSEL_temperature_properties.wavelength_T_theory_arr,
+        cavity_resonance_arr=VCSEL_temperature_properties.cavity_resonance_arr,
+        wavelength_arr_arr=VCSEL_temperature_properties.wavelength_arr_arr,
+        r_arr_arr=VCSEL_temperature_properties.r_arr_arr,
+        wavelength_tuning_range=VCSEL_temperature_properties.wavelength_tuning_range,
+    )
+
     # plotting
 
-    # Create figure
-    fig = plt.figure(figsize=(11, 8))
+    plot_analyse_VCSEL(results, Save_to="pdf")
 
-    # First row: full width plot (row 1, spans 2 columns)
-    ax1 = plt.subplot(3, 2, (1, 2))  # Span columns 1-2 of row 1
+    return results
 
-    structure_interpolated = interpolate_structure(VCSEL)
-    structure_interpolated["n"] = np.real(
-        structure_interpolated["n"]
-    )  # only plot Re(n)
 
-    ax1.plot(
-        structure_interpolated["position"] * 1e6,
-        structure_interpolated["n"],
-        label="n(z)",
-    )
+@dataclass
+class CavityTuningProperties:
 
-    cavity_start = float(
-        structure_interpolated.loc[
-            structure_interpolated["name"] == "Cavity", "position"
-        ].iloc[0]
-    )
-    cavity_stop = float(
-        structure_interpolated.loc[
-            structure_interpolated["name"] == "Cavity", "position"
-        ].iloc[-1]
-    )
-    n_cav = float(
-        structure_interpolated.loc[
-            structure_interpolated["name"] == "Cavity", "n"
-        ].iloc[0]
-    )
-    ax1.fill_between(
-        np.array([cavity_start, cavity_stop]) * 1e6,
-        [0, 0],
-        [n_cav, n_cav],
-        alpha=0.3,
-        color="tab:red",
-        label="Cavity",
-    )
-    ax1.plot(
-        np.array(field_positions) * 1e6,
-        abs(field_values) ** 2 / np.max(abs(field_values) ** 2) * np.max(n_field_arr),
-        color="tab:red",
-        label="$|E|^2$",
-    )
+    structure: pd.DataFrame
 
-    # Combine them
-    ax1.legend()
-    ax1.autoscale(enable=True, axis="x", tight=True)
-    ax1.autoscale(enable=True, axis="y", tight=True)
-    ax1.set_xlabel("Postion $(\\mu m)$")
-    ax1.set_ylabel("Refractive index")
+    alpha_i: float
 
-    # Second row: two plots
-    ax2 = plt.subplot(3, 2, 3)  # Row 2, Column 1
-    ax1 = plt.gca()
-    ax1.plot(wavelength_arr * 1e9, r_arr, color="tab:blue", label="Reflectivity")
-    ax1.set_xlabel("Wavelength (nm)")
-    ax1.set_ylabel("Reflectivity")
+    d_coating_arr: np.ndarray
+    R_coating_arr: np.ndarray
+    R_tuning_range_coating: float
+    n_coating: float
+    L_eff_coating_arr: np.ndarray
+    n_cavity_eff_coating_arr: np.ndarray
+    v_gr_coating_arr: np.ndarray
+    alpha_m_coating_arr: np.ndarray
+    alpha_m_coating_range: float
+    photon_lifetime_coating_arr: np.ndarray
+    photon_lifetime_coating_range: float
 
-    # Create second y-axis for phase
-    ax2 = ax1.twinx()
-    ax2.plot(
-        wavelength_arr * 1e9,
-        phase_arr / np.pi,
-        color="tab:orange",
-        label="Phase",
-        linestyle=":",
-    )
-    ax2.set_ylabel("Phase (rad)", color="tab:orange")
-
-    # Add a single legend for both plots
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="best")
-    ax2.set_ylim(-1, 1)
-
-    if cavity_resonance_reflectivity <= 1:
-        ax1.set_ylim(0, 1)
-    ax1.autoscale(enable=True, axis="x", tight=True)
-
-    ax3 = plt.subplot(3, 2, 4)  # Row 2, Column 2
-    ax3.plot(wavelength_arr_ROI * 1e9, t_arr_ROI_leveled, label="T (leveled)")
-    ax3.axvline(
-        cavity_resonance_wavelength * 1e9,
-        linestyle=":",
-        label=f"$\\lambda$: {cavity_resonance_wavelength*1e9:.1f}nm",
-    )
-    ax3.axhline(halfmax, linestyle=":")
-
-    ax3.hlines(
-        halfmax,
-        hw_start * 1e9,
-        hw_stop * 1e9,
-        color="red",
-        label=f"FWHM: {FWHM*1e9:.2f}nm",
-    )
-
-    ax3.set_xlabel("Wavelength (nm)")
-    ax3.legend()
-    ax3.autoscale(enable=True, axis="x", tight=True)
-    ax3.autoscale(enable=True, axis="y", tight=True)
-
-    # Third row: two plots
-    ax4 = plt.subplot(3, 2, 5)  # Row 3, Column 1
-
-    DBR_d1 = VCSEL.iloc[-2]["d"]
-    DBR_d2 = VCSEL.iloc[-3]["d"]
-    DBR_n1 = VCSEL.iloc[-2]["n"]
-    DBR_n2 = VCSEL.iloc[-3]["n"]
-
-    ax4.plot(-1 * d_etch_arr * 1e9, R_etch_arr)
-    ax4.plot(d_coating_arr * 1e9, R_coating_arr, color="tab:blue")
-
-    ax4.axvline(0, color="tab:red")
-
-    ax4.axvspan(
-        d_coating_arr[0] * 1e9,
-        d_coating_arr[-1] * 1e9,
-        alpha=0.2,
-        color="tab:green",
-        label=n_AR_coating,
-    )
-
-    start_position = d_etch_arr[0]
-    label = None
-    for i in range(2):
-
-        end_position = start_position + DBR_d1
-        if i == 1:
-            label = DBR_n1
-        ax4.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:blue",
-            label=label,
-        )
-        start_position = end_position
-        end_position = start_position + DBR_d2
-        if i == 1:
-            label = DBR_n2
-        ax4.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:orange",
-            label=label,
-        )
-        start_position = end_position
-
-    ax4.autoscale(enable=True, axis="x", tight=True)
-    ax4.autoscale(enable=True, axis="y", tight=True)
-    ax4.legend()
-    ax4.set_xlabel("Thickness (nm)")
-    ax4.set_ylabel("Reflectivity")
-
-    ax5 = plt.subplot(3, 2, 6)  # Row 3, Column 2
-
-    ax5.plot(
-        T_arr,
-        wavelength_T_theory_arr * 1e9,
-        label=f"{temperature_coefficent*1e9:.3f} nm/K",
-    )
-    ax5.plot(
-        T_arr,
-        np.array(cavity_resonance_arr) * 1e9,
-        linestyle="",
-        marker="o",
-        label="Simulation",
-    )
-    ax5.autoscale(enable=True, axis="x", tight=True)
-    ax5.autoscale(enable=True, axis="y", tight=True)
-    ax5.legend()
-    ax5.set_xlabel("Active region temperature (K)")
-    ax5.set_ylabel("$\\lambda_{cavity}$ (nm)")
-
-    plt.tight_layout()
-
-    if Save_to != None:
-        formatted_time = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"VCSEL_analysis_{formatted_time}." + Save_to
-        plt.savefig(filename, bbox_inches="tight", dpi=600)
-        print("File saved to: " + filename)
-
-    plt.show()
+    d_etching_arr: np.ndarray
+    R_etching_arr: np.ndarray
+    R_tuning_range_etching: float
+    L_eff_etch_arr: np.ndarray
+    n_cavity_eff_etch_arr: np.ndarray
+    v_gr_etch_arr: np.ndarray
+    alpha_m_etch_arr: np.ndarray
+    alpha_m_etch_range: float
+    photon_lifetime_etch_arr: np.ndarray
+    photon_lifetime_etch_range: float
 
 
 def analyse_VCSEL_lifetime_tuning(
@@ -1074,6 +1208,7 @@ def analyse_VCSEL_lifetime_tuning(
     resolution=1e-9,
     Plot=True,
     Print=True,
+    Save_to="pdf",
 ):
     """
     Docstring for analyse_VCSEL_lifetime_tuning
@@ -1086,6 +1221,9 @@ def analyse_VCSEL_lifetime_tuning(
     :param Print: Description
 
     Basically the analyse_reflectivity() function, but for every etch and depostionen thickness, the effective cavity length and the effective refractive index of the cavity are calculated, to calculate mirror losses and photon lifetime.
+
+    TODO
+
     """
 
     (
@@ -1109,32 +1247,20 @@ def analyse_VCSEL_lifetime_tuning(
     )
 
     # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
-    d_coating_arr, R_coating_arr, R_coating_tuning_range = analyse_AR_coating(
+    DBR_top_coating_properties = analyse_AR_coating(
         DBR_top,
         target_wavelength,
         n_coating=n_coating,
         resolution=resolution,
-        Plot=True,
+        Plot=False,
     )
     plt.show()
-    d_etch_arr, R_etch_arr, R_etch_tuning_range = analyse_etching(
-        DBR_top, target_wavelength, resolution=resolution, Plot=True
+    DBR_top_etching_properties = analyse_etching(
+        DBR_top, target_wavelength, resolution=resolution, Plot=False
     )
     plt.show()
 
-    (
-        DBR_bottom_r_arr,
-        DBR_bottom_t_arr,
-        DBR_bottom_phase_arr,
-        DBR_bottom_r_at_target,
-        DBR_bottom_phase_at_target,
-        DBR_bottom_stopband_width,
-        DBR_bottom_field_positions,
-        DBR_bottom_field_values,
-        DBR_bottom_n_field_arr,
-        DBR_bottom_l_eff,
-        DBR_bottom_interface_position,
-    ) = analyse_DBR(
+    DBR_bottom_properties = analyse_DBR(
         DBR_bottom,
         target_wavelength,
         np.array([target_wavelength]),
@@ -1144,77 +1270,44 @@ def analyse_VCSEL_lifetime_tuning(
 
     # this is the precise method, maybe change in effective penetration depth is neglectable, therefore DBR_top_l_eff before coating might be sufficient. Variation for ar coating < 1nm, for etch < 5nm
 
+    n1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["n"].values[0]
+    n2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["n"].values[0]
+
     DBR_top_l_eff_coating_arr = []
-    for d_coating in d_coating_arr:
+    for d_coating in DBR_top_coating_properties.d_arr:
         DBR_top_AR = apply_AR_coating(DBR_top, n_coating, d_coating)
-        (
-            DBR_top_r_arr,
-            DBR_top_t_arr,
-            DBR_top_phase_arr,
-            DBR_top_r_at_target,
-            DBR_top_phase_at_target,
-            DBR_top_stopband_width,
-            DBR_top_field_positions,
-            DBR_top_field_values,
-            DBR_top_n_field_arr,
-            DBR_top_l_eff,
-            DBR_top_interface_position,
-        ) = analyse_DBR(
-            DBR_top_AR,
-            target_wavelength,
-            np.array([target_wavelength]),
-            Plot=False,
-            Print=False,
-        )
 
-        DBR_top_l_eff_coating_arr.append(DBR_top_l_eff)
-
-    plt.plot(d_coating_arr, np.array(DBR_top_l_eff_coating_arr) * 1e9)
-    plt.ylabel("l_eff (nm)")
-    plt.show()
+        M_top_DBR = transfer_matrix(DBR_top_AR, target_wavelength)
+        R_top_DBR = calculate_reflectivity(M_top_DBR)
+        l_eff = DBR_penetration_depth(n1, n2, R_top_DBR, target_wavelength)
+        DBR_top_l_eff_coating_arr.append(l_eff)
 
     DBR_top_l_eff_etch_arr = []
-    for d_etch in d_etch_arr:
-        DBR_top_AR = apply_etch(DBR_top, d_etch)
-        (
-            DBR_top_r_arr,
-            DBR_top_t_arr,
-            DBR_top_phase_arr,
-            DBR_top_r_at_target,
-            DBR_top_phase_at_target,
-            DBR_top_stopband_width,
-            DBR_top_field_positions,
-            DBR_top_field_values,
-            DBR_top_n_field_arr,
-            DBR_top_l_eff,
-            DBR_top_interface_position,
-        ) = analyse_DBR(
-            DBR_top_AR,
-            target_wavelength,
-            np.array([target_wavelength]),
-            Plot=False,
-            Print=False,
-        )
+    for d_etch in DBR_top_etching_properties.d_arr:
+        DBR_top_etch = apply_etch(DBR_top, d_etch)
 
-        DBR_top_l_eff_etch_arr.append(DBR_top_l_eff)
-
-    plt.plot(d_etch_arr, np.array(DBR_top_l_eff_etch_arr) * 1e9)
-    plt.ylabel("l_eff (nm)")
-    plt.show()
+        M_top_DBR = transfer_matrix(DBR_top_etch, target_wavelength)
+        R_top_DBR = calculate_reflectivity(M_top_DBR)
+        l_eff = DBR_penetration_depth(n1, n2, R_top_DBR, target_wavelength)
+        DBR_top_l_eff_etch_arr.append(l_eff)
 
     n_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["n"].values[0]
     L_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["d"].values[0]
 
-    L_cavity_etch_arr = [L_cavity] * len(d_etch_arr)
-    DBR_bottom_l_eff_etch_arr = [DBR_bottom_l_eff] * len(d_etch_arr)
+    L_cavity_etch_arr = [L_cavity] * len(DBR_top_etching_properties.d_arr)
+    DBR_bottom_l_eff_etch_arr = [DBR_bottom_properties.l_eff] * len(
+        DBR_top_etching_properties.d_arr
+    )
     L_eff_etch_arr = (
         np.array(L_cavity_etch_arr)
         + np.array(DBR_top_l_eff_etch_arr)
         + np.array(DBR_bottom_l_eff_etch_arr)
     )
 
-    L_cavity_coating_arr = [L_cavity] * len(d_coating_arr)
-    DBR_bottom_l_eff_coating_arr = [DBR_bottom_l_eff] * len(d_coating_arr)
+    L_cavity_coating_arr = [L_cavity] * len(DBR_top_coating_properties.d_arr)
+    DBR_bottom_l_eff_coating_arr = [DBR_bottom_properties.l_eff] * len(
+        DBR_top_coating_properties.d_arr
+    )
     L_eff_coating_arr = (
         np.array(L_cavity_coating_arr)
         + np.array(DBR_top_l_eff_coating_arr)
@@ -1236,31 +1329,32 @@ def analyse_VCSEL_lifetime_tuning(
     DBR_top_n_eff = (DBR_top_n1 * DBR_top_d1 + DBR_top_n2 * DBR_top_d2) / (
         DBR_top_d1 + DBR_top_d2
     )
+
     alpha_m_etch_arr = []
     n_cavity_eff_etch_arr = []
     v_gr_etch_arr = []
     photon_lifetime_etch_arr = []
-    for i in range(len(d_etch_arr)):
+    for i in range(len(DBR_top_etching_properties.d_arr)):
 
         alpha_m_etch = VCSEL_mirror_loss(
-            L_eff_etch_arr[i], R_etch_arr[i], DBR_top_r_at_target
+            L_eff_etch_arr[i],
+            DBR_top_etching_properties.R_arr[i],
+            DBR_bottom_properties.R_arr[DBR_bottom_properties.idx_at_target],
         )
         alpha_m_etch_arr.append(alpha_m_etch)
 
         n_cavity_eff = (
             n_cavity * L_cavity
-            + DBR_bottom_n_eff * DBR_bottom_l_eff
-            + DBR_top_n_eff * DBR_top_l_eff
+            + DBR_bottom_n_eff * DBR_bottom_properties.l_eff
+            + DBR_top_n_eff * DBR_top_l_eff_etch_arr[i]
         ) / L_eff_etch_arr[i]
 
         n_cavity_eff_etch_arr.append(n_cavity_eff)
 
-        v_gr = const.c / n_cavity_eff_etch_arr[i]
+        v_gr = const.c / n_cavity_eff
         v_gr_etch_arr.append(v_gr)
 
-        photon_lifetime_etch = VCSEL_photon_lifetime(
-            v_gr_etch_arr[i], alpha_m_etch_arr[i], alpha_i
-        )
+        photon_lifetime_etch = VCSEL_photon_lifetime(v_gr, alpha_m_etch, alpha_i)
         photon_lifetime_etch_arr.append(photon_lifetime_etch)
 
     alpha_m_etch_range = np.max(alpha_m_etch_arr) - np.min(alpha_m_etch_arr)
@@ -1272,27 +1366,27 @@ def analyse_VCSEL_lifetime_tuning(
     n_cavity_eff_coating_arr = []
     v_gr_coating_arr = []
     photon_lifetime_coating_arr = []
-    for i in range(len(d_coating_arr)):
+    for i in range(len(DBR_top_coating_properties.d_arr)):
 
         alpha_m_coating = VCSEL_mirror_loss(
-            L_eff_coating_arr[i], R_coating_arr[i], DBR_top_r_at_target
+            L_eff_coating_arr[i],
+            DBR_top_coating_properties.R_arr[i],
+            DBR_bottom_properties.R_arr[DBR_bottom_properties.idx_at_target],
         )
         alpha_m_coating_arr.append(alpha_m_coating)
 
         n_cavity_eff = (
             n_cavity * L_cavity
-            + DBR_bottom_n_eff * DBR_bottom_l_eff
-            + DBR_top_n_eff * DBR_top_l_eff
+            + DBR_bottom_n_eff * DBR_bottom_properties.l_eff
+            + DBR_top_n_eff * DBR_top_l_eff_coating_arr[i]
         ) / L_eff_coating_arr[i]
 
         n_cavity_eff_coating_arr.append(n_cavity_eff)
 
-        v_gr = const.c / n_cavity_eff_coating_arr[i]
+        v_gr = const.c / n_cavity_eff
         v_gr_coating_arr.append(v_gr)
 
-        photon_lifetime_coating = VCSEL_photon_lifetime(
-            v_gr_coating_arr[i], alpha_m_coating_arr[i], alpha_i
-        )
+        photon_lifetime_coating = VCSEL_photon_lifetime(v_gr, alpha_m_coating, alpha_i)
         photon_lifetime_coating_arr.append(photon_lifetime_coating)
 
     alpha_m_coating_range = np.max(alpha_m_coating_arr) - np.min(alpha_m_coating_arr)
@@ -1300,201 +1394,50 @@ def analyse_VCSEL_lifetime_tuning(
         photon_lifetime_coating_arr
     )
 
+    L_eff_coating_arr = np.array(L_eff_coating_arr)
+    n_cavity_eff_coating_arr = np.array(n_cavity_eff_coating_arr)
+    v_gr_coating_arr = np.array(v_gr_coating_arr)
+    alpha_m_coating_arr = np.array(alpha_m_coating_arr)
+    photon_lifetime_coating_arr = np.array(photon_lifetime_coating_arr)
+
+    L_eff_etch_arr = np.array(L_eff_etch_arr)
+    n_cavity_eff_etch_arr = np.array(n_cavity_eff_etch_arr)
+    v_gr_etch_arr = np.array(v_gr_etch_arr)
+    alpha_m_etch_arr = np.array(alpha_m_etch_arr)
+    photon_lifetime_etch_arr = np.array(photon_lifetime_etch_arr)
+
+    VCSEL_cavity_tuning_properties = CavityTuningProperties(
+        structure=VCSEL,
+        alpha_i=alpha_i,
+        d_coating_arr=DBR_top_coating_properties.d_arr,
+        R_coating_arr=DBR_top_coating_properties.R_arr,
+        R_tuning_range_coating=DBR_top_coating_properties.R_tuning_range,
+        n_coating=n_coating,
+        L_eff_coating_arr=L_eff_coating_arr,
+        n_cavity_eff_coating_arr=n_cavity_eff_coating_arr,
+        v_gr_coating_arr=v_gr_coating_arr,
+        alpha_m_coating_arr=alpha_m_coating_arr,
+        alpha_m_coating_range=alpha_m_coating_range,
+        photon_lifetime_coating_arr=photon_lifetime_coating_arr,
+        photon_lifetime_coating_range=photon_lifetime_coating_range,
+        d_etching_arr=DBR_top_etching_properties.d_arr,
+        R_etching_arr=DBR_top_etching_properties.R_arr,
+        R_tuning_range_etching=DBR_top_etching_properties.R_tuning_range,
+        L_eff_etch_arr=L_eff_etch_arr,
+        n_cavity_eff_etch_arr=n_cavity_eff_etch_arr,
+        v_gr_etch_arr=v_gr_etch_arr,
+        alpha_m_etch_arr=alpha_m_etch_arr,
+        alpha_m_etch_range=alpha_m_etch_range,
+        photon_lifetime_etch_arr=photon_lifetime_etch_arr,
+        photon_lifetime_etch_range=photon_lifetime_etch_range,
+    )
+
     if Plot:
-
-        DBR_d1 = VCSEL.iloc[-2]["d"]
-        DBR_d2 = VCSEL.iloc[-3]["d"]
-        DBR_n1 = VCSEL.iloc[-2]["n"]
-        DBR_n2 = VCSEL.iloc[-3]["n"]
-
-        fig = plt.figure(figsize=(11, 8))
-
-        ax1 = plt.subplot(3, 1, 1)  # Span column 1 of row 1
-
-        ax1.plot(-1 * d_etch_arr * 1e9, R_etch_arr)
-        ax1.plot(d_coating_arr * 1e9, R_coating_arr, color="tab:blue")
-        ax1.axvline(0, color="tab:red")
-
-        ax1.axvspan(
-            d_coating_arr[0] * 1e9,
-            d_coating_arr[-1] * 1e9,
-            alpha=0.2,
-            color="tab:green",
-            label=n_coating,
+        plot_analyse_VCSEL_lifetime_tuning(
+            VCSEL_cavity_tuning_properties, Save_to=Save_to
         )
-
-        start_position = d_etch_arr[0]
-        label = None
-        for i in range(2):
-
-            end_position = start_position + DBR_d1
-            if i == 1:
-                label = DBR_n1
-            ax1.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:blue",
-                label=label,
-            )
-            start_position = end_position
-            end_position = start_position + DBR_d2
-            if i == 1:
-                label = DBR_n2
-            ax1.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:orange",
-                label=label,
-            )
-            start_position = end_position
-
-        ax1.autoscale(enable=True, axis="x", tight=True)
-        ax1.autoscale(enable=True, axis="y", tight=True)
-        ax1.set_ylabel("Top DBR Reflectivity")
-        ax1.tick_params(axis="x", labelbottom=False)
-
-        ax2 = plt.subplot(3, 1, 2)
-        ax2.plot(-1 * d_etch_arr * 1e9, np.array(alpha_m_etch_arr) * 1e-2)
-        ax2.plot(
-            d_coating_arr * 1e9, np.array(alpha_m_coating_arr) * 1e-2, color="tab:blue"
-        )
-        ax2.axvline(0, color="tab:red")
-
-        ax2.axvspan(
-            d_coating_arr[0] * 1e9,
-            d_coating_arr[-1] * 1e9,
-            alpha=0.2,
-            color="tab:green",
-            label=n_coating,
-        )
-
-        start_position = d_etch_arr[0]
-        label = None
-        for i in range(2):
-
-            end_position = start_position + DBR_d1
-            if i == 1:
-                label = DBR_n1
-            ax2.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:blue",
-                label=label,
-            )
-            start_position = end_position
-            end_position = start_position + DBR_d2
-            if i == 1:
-                label = DBR_n2
-            ax2.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:orange",
-                label=label,
-            )
-            start_position = end_position
-
-        ax2.autoscale(enable=True, axis="x", tight=True)
-        ax2.autoscale(enable=True, axis="y", tight=True)
-        ax2.set_ylabel("Mirror Loss (1/cm)")
-        ax2.tick_params(axis="x", labelbottom=False)
-
-        ax3 = plt.subplot(3, 1, 3)
-
-        ax3.plot(
-            -1 * d_etch_arr * 1e9,
-            np.array(photon_lifetime_etch_arr) * 1e12,
-            label=f"$\\alpha_i$ = {alpha_i*1e-2:.2}/cm",
-        )
-        ax3.plot(
-            d_coating_arr * 1e9,
-            np.array(photon_lifetime_coating_arr) * 1e12,
-            color="tab:blue",
-        )
-
-        ax3.axvline(0, color="tab:red")
-
-        ax3.axvspan(
-            d_coating_arr[0] * 1e9,
-            d_coating_arr[-1] * 1e9,
-            alpha=0.2,
-            color="tab:green",
-            label=n_coating,
-        )
-
-        start_position = d_etch_arr[0]
-        label = None
-        for i in range(2):
-
-            end_position = start_position + DBR_d1
-            if i == 1:
-                label = DBR_n1
-            ax3.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:blue",
-                label=label,
-            )
-            start_position = end_position
-            end_position = start_position + DBR_d2
-            if i == 1:
-                label = DBR_n2
-            ax3.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:orange",
-                label=label,
-            )
-            start_position = end_position
-
-        ax3.autoscale(enable=True, axis="x", tight=True)
-        ax3.autoscale(enable=True, axis="y", tight=True)
-        ax3.set_xlabel("Thickness (nm)")
-        ax3.set_ylabel("Photon Lifetime (ps)")
-        ax3.legend()
-        plt.show()
 
     if Print:
+        print_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties)
 
-        print("=" * 60 + "\nLifetime Tuning Analysis \n" + "=" * 60)
-        print(f"R tuning range by AR coating: {R_coating_tuning_range:.4f}")
-        print(f"R tuning range by etching: {R_etch_tuning_range:.4f}")
-        print(
-            f"Mirror loss tuning range by AR coating: {alpha_m_coating_range*1e-2:.4f} /cm"
-        )
-        print(f"Mirror loss tuning range by etching: {alpha_m_etch_range*1e-2:.4f} /cm")
-        print(
-            f"Photon lifetime tuning range by AR coating: {photon_lifetime_coating_range*1e12:.4f} ps"
-        )
-        print(
-            f"Photon lifetime tuning range by etching: {photon_lifetime_etch_range*1e12:.4f} ps"
-        )
-
-    return (
-        d_coating_arr,
-        R_coating_arr,
-        R_coating_tuning_range,
-        n_coating,
-        L_eff_coating_arr,
-        n_cavity_eff_coating_arr,
-        v_gr_coating_arr,
-        alpha_m_coating_arr,
-        alpha_m_coating_range,
-        photon_lifetime_coating_arr,
-        photon_lifetime_coating_range,
-        d_etch_arr,
-        R_etch_arr,
-        R_etch_tuning_range,
-        L_eff_etch_arr,
-        n_cavity_eff_etch_arr,
-        v_gr_etch_arr,
-        alpha_m_etch_arr,
-        alpha_m_etch_range,
-        photon_lifetime_etch_arr,
-        photon_lifetime_etch_range,
-    )
+    return VCSEL_cavity_tuning_properties

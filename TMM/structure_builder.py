@@ -244,15 +244,17 @@ def plot_structure(structure, show_cavity_color: bool = True):
                 structure_interpolated["name"] == "Cavity", "position"
             ].iloc[-1]
         )
-        n_cav = float(
-            structure_interpolated.loc[
-                structure_interpolated["name"] == "Cavity", "n"
-            ].iloc[0]
-        )
+        # n_cav = float(
+        #     structure_interpolated.loc[
+        #         structure_interpolated["name"] == "Cavity", "n"
+        #     ].iloc[0]
+        # )
+
+        n_max = structure["n"].values.max()
         plt.fill_between(
             np.array([cavity_start, cavity_stop]) * 1e6,
             [0, 0],
-            [n_cav, n_cav],
+            [n_max, n_max],
             alpha=0.3,
             color="tab:red",
             label="Cavity",
