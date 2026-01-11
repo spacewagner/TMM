@@ -26,6 +26,7 @@ import time
 from scipy import constants as const
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
+from scipy.signal import find_peaks, peak_widths, peak_prominences
 
 from TMM.optics_utils import (
     wavelength_to_frequency,
@@ -49,7 +50,7 @@ from TMM.structure_builder import (
     build_DBR_structure,
     plot_structure,
     interpolate_structure,
-    flip_structure,
+    flip_structure,VCSEL_embedding_active_region
 )
 
 from TMM.outputs import (
@@ -59,36 +60,75 @@ from TMM.outputs import (
 )
 
 
-def analyse_electrical_field(structure, target_wavelength, Print=True, Plot=True):
+def analyse_electrical_field(
+    structure, target_wavelength, position_resolution=100, Print=True, Plot=True
+):
+    """
+    Docstring for analyse_electrical_field
+
+    :param structure: Description
+    :param target_wavelength: Description
+    :param Print: Description
+    :param Plot: Description
+
+    TODO
+    Confinement should just be calculated over the active region, which is a segment of the cavity
+
+    """
 
     structure_field_properties_results = calculate_electrical_field(
-        structure, target_wavelength, Plot=Plot
-    )
-
-    integral_full_real = np.sum(
-        np.real(structure_field_properties_results.n_field_arr)
-        * np.abs(structure_field_properties_results.field_values_arr) ** 2
+        structure, target_wavelength, position_resolution=position_resolution, Plot=Plot
     )
     integral_full_imaginary = np.sum(
         np.imag(structure_field_properties_results.n_field_arr)
         * np.abs(structure_field_properties_results.field_values_arr) ** 2
     )
     alpha_i = coextinction_to_loss(integral_full_imaginary)
+    integral_full_real = np.sum(
+        # np.real(structure_field_properties_results.n_field_arr)*
+        np.abs(structure_field_properties_results.field_values_arr)
+        ** 2
+    )
+
+    idx_cavity = structure.loc[structure["name"] == "Cavity"].index
+    idx_embedding = structure.loc[structure["name"] == "Embedding"].index
+    idx_active_region = structure[structure["name"].str.contains("Active_Region")].index
+
+    # if not idx_cavity.empty:
+    #     print("Cavity without active region found")
+    # if not idx_embedding.empty:
+    #     print("Cavity with active region found")
 
     Gamma_z = 0.0
-    if (structure["name"] == "Cavity").any():
-        cavity_start = float(
-            structure.loc[structure["name"] == "Cavity", "position"].iloc[0]
-        )
-        cavity_d = float(structure.loc[structure["name"] == "Cavity", "d"].iloc[0])
+    cavity_start = None
+    cavity_stop = None
+    active_region_start = None
+    active_region_stop = None
+
+    if not idx_cavity.empty:
+        cavity_start = structure.iloc[idx_cavity[0]]["position"]
+        cavity_d = structure.iloc[idx_cavity[0]]["d"]
         cavity_stop = cavity_start + cavity_d
 
+    if not idx_embedding.empty:
+        cavity_start = structure.iloc[idx_embedding[0]]["position"]
+        cavity_stop = (
+            structure.iloc[idx_embedding[1]]["position"]
+            + structure.iloc[idx_embedding[1]]["d"]
+        )
+
+        active_region_start = structure.iloc[idx_active_region[0]]["position"]
+        active_region_stop = (
+            structure.iloc[idx_active_region[-1]]["position"]
+            + structure.iloc[idx_active_region[-1]]["d"]
+        )
+
+    if cavity_start != None and cavity_stop != None:
         mask_cavity = (
             structure_field_properties_results.field_positions_arr >= cavity_start
         ) & (structure_field_properties_results.field_positions_arr <= cavity_stop)
         integral_cavity = np.sum(
-            np.real(structure_field_properties_results.n_field_arr[mask_cavity])
-            * np.abs(structure_field_properties_results.field_values_arr[mask_cavity])
+            np.abs(structure_field_properties_results.field_values_arr[mask_cavity])
             ** 2
         )
         Gamma_z = (
@@ -97,12 +137,37 @@ def analyse_electrical_field(structure, target_wavelength, Print=True, Plot=True
             else 0.0
         )
 
+    Gamma_z_active_region = 0.0
+
+    if active_region_start != None and active_region_stop != None:
+        mask_active_region = (
+            structure_field_properties_results.field_positions_arr
+            >= active_region_start
+        ) & (
+            structure_field_properties_results.field_positions_arr <= active_region_stop
+        )
+        integral_active_region = np.sum(
+            np.abs(
+                structure_field_properties_results.field_values_arr[mask_active_region]
+            )
+            ** 2
+        )
+        Gamma_z_active_region = (
+            float(integral_active_region / integral_cavity)
+            if integral_cavity != 0
+            else 0.0
+        )
+
     structure_field_properties_results.alpha_i = alpha_i
     structure_field_properties_results.Gamma_z = Gamma_z
+    structure_field_properties_results.Gamma_z_active_region = Gamma_z_active_region
 
     if Print:
         print("=" * 60 + "\nElectrical Field Analysis \n" + "=" * 60)
         print(f"Mode confinement Gamma_z: {Gamma_z:.4f}")
+        print(
+            f"Active region confinement Gamma_z_active_region: {Gamma_z_active_region:.4f}"
+        )
         print(f"Internal loss: {alpha_i*1e-2:.5f} /cm")
 
     return structure_field_properties_results
@@ -1441,3 +1506,122 @@ def analyse_VCSEL_lifetime_tuning(
         print_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties)
 
     return VCSEL_cavity_tuning_properties
+
+
+@dataclass
+class ActiveRegionEmbeddingProperties:
+    d_embedding_arr: np.ndarray
+    Gamma_z_arr: np.ndarray
+    Gamma_z_active_region_arr: np.ndarray
+
+    d_optimimum_arr: np.ndarray
+    Gamma_z_optimimum_arr: np.ndarray
+
+    d_active_region: float
+
+def optimize_embedding_thickness(VCSEL, active_region, target_wavelength, d_min, d_max, d_resolution=20):
+
+    d_embedding_arr = np.linspace(d_min, d_max, d_resolution)
+    Gamma_z_arr = []
+    Gamma_z_active_region_arr = []
+    position_resolution = 100
+
+    d_active_region = active_region["d"].sum()
+
+    for d_embedding in d_embedding_arr:
+        VCSEL_modified = VCSEL_embedding_active_region(
+            VCSEL, active_region, d_embedding=d_embedding
+        )
+        idx_embedding = VCSEL_modified.loc[VCSEL_modified["name"] == "Embedding"].index
+        results = analyse_electrical_field(
+            VCSEL_modified,
+            target_wavelength,
+            position_resolution=position_resolution,
+            Plot=False,
+            Print=False,
+        )
+        plt.plot(
+            results.field_positions_arr[
+                idx_embedding[0]
+                * position_resolution : (idx_embedding[1] + 1)
+                * position_resolution
+            ],
+            np.abs(
+                results.field_values_arr[
+                    idx_embedding[0]
+                    * position_resolution : (idx_embedding[1] + 1)
+                    * position_resolution
+                ]
+            )
+            ** 2
+            / np.max(np.abs(results.field_values_arr) ** 2),
+        )
+        Gamma_z = results.Gamma_z
+        Gamma_z_arr.append(Gamma_z)
+
+        Gamma_z_active_region = results.Gamma_z_active_region
+        Gamma_z_active_region_arr.append(Gamma_z_active_region)
+
+    plt.show()
+
+    Gamma_z_arr = np.array(Gamma_z_arr)
+    Gamma_z_active_region_arr = np.array(Gamma_z_active_region_arr)
+
+    Gamma_z_optimimum_arr = []
+    Gamma_z_optimimum_positions_arr = []
+
+    peaks, properties = find_peaks(
+        Gamma_z_arr,
+        height=0,
+        threshold=None,
+        distance=1,
+    )
+
+    Gamma_z_optimimum_arr = Gamma_z_arr[peaks]
+    d_optimimum_arr = d_embedding_arr[peaks]
+
+    results = ActiveRegionEmbeddingProperties(
+        d_embedding_arr=d_embedding_arr,
+        Gamma_z_arr=Gamma_z_arr,
+        Gamma_z_active_region_arr=Gamma_z_active_region_arr,
+        d_optimimum_arr=d_optimimum_arr,
+        Gamma_z_optimimum_arr=Gamma_z_optimimum_arr,
+        d_active_region=d_active_region,
+    )
+
+    plt.plot(
+        (results.d_embedding_arr + results.d_active_region) * 1e9,
+        results.Gamma_z_arr,
+        label="Γ Cavity",
+    )
+    plt.plot(
+        (results.d_embedding_arr + results.d_active_region) * 1e9,
+        results.Gamma_z_active_region_arr,
+        label="Γ Active Region",
+    )
+
+    for pos, val in zip(results.d_optimimum_arr, results.Gamma_z_optimimum_arr):
+        plt.plot((pos + results.d_active_region) * 1e9, val, marker="o", color="red")
+
+    plt.xlabel("Cavity Length (nm)")
+    plt.ylabel("Mode Confinement Γz")
+    plt.legend()
+
+    ax2 = plt.gca().twiny()
+    ax2.set_xlim(plt.xlim())
+    ax2.set_xlabel("Embedding Thickness (nm)")
+    ax2.tick_params(axis="x")
+
+    cavity_lengths = plt.gca().get_xticks()
+    ax2.set_xticks(cavity_lengths)
+    ax2.set_xticklabels(
+        np.linspace(
+            results.d_embedding_arr[0] * 1e9,
+            results.d_embedding_arr[-1] * 1e9,
+            len(cavity_lengths),
+        ).round(1)
+    )
+
+    plt.tight_layout()
+    plt.show()
+    return results

@@ -349,7 +349,9 @@ def interpolate_structure(structure, position_resolution: int = 100):
         position = structure_index_reset.loc[i]["position"]
         d = structure_index_reset.loc[i]["d"]
 
-        position_interpolated = np.linspace(position, position + d, position_resolution)
+        position_interpolated = np.linspace(
+            position, position + d - (d / position_resolution), position_resolution
+        )
         resolution = np.gradient(position_interpolated)
 
         layer_interpolated = pd.DataFrame(
@@ -386,3 +388,82 @@ def flip_structure(structure):
     structure_flipped["position"] = position_arr
 
     return structure_flipped
+
+
+def reset_position(structure: pd.DataFrame) -> pd.DataFrame:
+    """Reset the position column of a structure DataFrame."""
+    pos = 0
+    pos_arr = []
+    for i in range(len(structure)):
+        pos_arr.append(pos)
+        d = structure.iloc[i]["d"]
+        pos += d
+    structure["position"] = pos_arr
+    return structure
+
+
+def structure_embedding(structure, n_embedding, d_embedding, offset=0.0):
+
+    cladding1 = pd.DataFrame(
+        {
+            "name": ["Embedding"],
+            "n": [n_embedding],
+            "d": [d_embedding + offset],
+            "position": [0],
+        }
+    )
+
+    cladding2 = pd.DataFrame(
+        {
+            "name": ["Embedding"],
+            "n": [n_embedding],
+            "d": [d_embedding - offset],
+            "position": [0],
+        }
+    )
+
+    structure_embedded = pd.concat(
+        [
+            cladding1,
+            structure,
+            cladding2,
+        ],
+        ignore_index=True,
+    )
+
+    structure_embedded = reset_position(structure_embedded)
+    return structure_embedded
+
+
+def VCSEL_embedding_active_region(VCSEL, active_region, d_embedding=0.0, offset=0.0):
+
+    index_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")].index.values[0]
+    n_cavity = VCSEL.at[index_cavity, "n"]
+
+    cavity_with_active_region = structure_embedding(
+        active_region, n_embedding=n_cavity, d_embedding=d_embedding / 2, offset=offset
+    )
+
+    VCSEL_modified = pd.concat(
+        [
+            VCSEL[:index_cavity],
+            cavity_with_active_region,
+            VCSEL[index_cavity + 1 :],
+        ],
+        ignore_index=True,
+    )
+    VCSEL_modified = reset_position(VCSEL_modified)
+    return VCSEL_modified
+
+
+def build_active_region(n_arr, d_arr):
+    active_region = pd.DataFrame(
+        {
+            "name": ["Active_Region_" + str(i) for i in range(len(n_arr))],
+            "n": n_arr,
+            "d": d_arr,
+            "position": [0] * len(n_arr),
+        }
+    )
+    active_region = reset_position(active_region)
+    return active_region

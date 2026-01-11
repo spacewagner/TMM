@@ -157,4 +157,77 @@ plt.ylabel("Reflectivity R")
 plt.legend()
 plt.xlim(18, 25)
 plt.ylim(0.97, 1.0)
+# %% Example Chuang p.218 fig. 5.14
+import numpy as np
+
+target_wavelength = 980e-9
+DBR = build_DBR_structure(3.52, 2.95, 20, target_wavelength, n_air=3.52)
+DBR = DBR.iloc[1:-1]
+plot_structure(DBR)
+
+wavelength_arr = np.arange(820e-9, 1230e-9, 1e-9)
+calculate_optical_properties(DBR, wavelength_arr)
+# %% Example Coldren p.120 fig. 3.14
+target_wavelength = 980e-9
+n_high = 3.52  # GaAs @ 940nm chuang p. 218
+n_low_arr = [2.88, 3.35, 3.45]  # AlAs @ 940nm
+N_DBR_pairs = 20  # final amount of DBR pairs
+wavelength_arr = np.arange(820e-9, 1230e-9, 1e-9)
+
+r_arr_complete = []
+t_arr_complete = []
+phase_arr_complete = []
+
+L_grating_arr = []
+
+R_theory = []
+
+for j, n_low in enumerate(n_low_arr):
+
+    DBR = build_DBR_structure(n_high, n_low, 20, target_wavelength)
+    DBR = DBR.iloc[1:-1]
+    plot_structure(DBR)
+
+    results = calculate_optical_properties(DBR, wavelength_arr, Plot=True)
+    plt.show()
+
+    r_arr_complete.append(results.R_arr)
+    t_arr_complete.append(results.T_arr)
+    phase_arr_complete.append(results.phase_arr)
+
+    R_theory.append(R_theoretical(20, n_low, n_high, n_low, n_high))
+
+    d_low = DBR.iloc[1]["d"]
+    d_high = DBR.iloc[2]["d"]
+
+    L_grating = (d_high + d_low) * N_DBR_pairs
+    L_grating_arr.append(L_grating)
+
+
+# %% Plot
+def beta(wavelength):
+    return 2 * np.pi / wavelength
+
+
+delta = beta(target_wavelength) - beta(wavelength_arr)  # Coldren eq. 3.47
+
+
+plt.plot(delta * L_grating_arr[0], r_arr_complete[0], label="r = 0.1")
+plt.plot(delta * L_grating_arr[1], r_arr_complete[1], label="r = 0.25")
+plt.plot(delta * L_grating_arr[2], r_arr_complete[2], label="r = 0.01")
+plt.plot(
+    [target_wavelength] * 3, R_theory, linestyle="", marker=".", label="R theoretical"
+)
+plt.xlabel("$\\delta L_{g} ~ (\\pi)$")
+plt.ylabel("$|r_g|^2$")
+plt.legend()
+plt.show()
+
+plt.plot(delta * L_grating_arr[0], phase_arr_complete[0], label="r = 0.1")
+# plt.plot(delta * L_grating_arr[1], phase_arr_complete[1], label="r = 0.25")
+plt.plot(delta * L_grating_arr[2], phase_arr_complete[2], label="r = 0.01")
+plt.xlabel("$\\delta L_{g} ~ (\\pi)$")
+plt.ylabel("$\\angle r_g$")
+plt.legend()
+plt.show()
 # %%

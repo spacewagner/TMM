@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import Tuple, List, Optional
+import pandas as pd
 
 from TMM.optics_utils import (
     transfer_matrix,
@@ -38,12 +39,19 @@ class OpticalProperties:
 
 @dataclass
 class FieldProperties:
+    structure_interpolated: pd.DataFrame
+
     field_positions_arr: np.ndarray
     field_values_arr: np.ndarray
+    field_values_forward_arr: np.ndarray
+    field_values_backward_arr: np.ndarray
     n_field_arr: np.ndarray
 
     # Optional
-    Gamma_z: Optional[float] = None  # Optical confinement factor
+    Gamma_z: Optional[float] = None  # Optical confinement factor (in cavity)
+    Gamma_z_active_region: Optional[float] = (
+        None  # Optical confinement factor (in active region)
+    )
     alpha_i: Optional[float] = None  # Internal loss [1/m]
 
 
@@ -139,50 +147,57 @@ def calculate_electrical_field(
 
     Ef = 1.0 + 0.0j
     Eb = 0.0 + 0.0j
-    vec = [Ef, Eb]
-
-    vec_arr = []
-    n_field_arr = []
+    vec = np.array([Ef, Eb], dtype=complex)
 
     # n_previous referrs to n of the previous investigated layer, so the right next layer. From point of forwards propagating wave, it's always going from the current layer to the previous investigated layer T_n_n_previous
-    n_previous = structure.iloc[0]["n"]
-    field_position_arr = []
+
+    n_previous = structure_interpolated.iloc[0]["n"]
+
+    field_position_arr = [0.0]
+    vec_arr = [vec]
+    n_field_arr = [n_previous]
 
     # go backwards through structure
     for i in range(len(structure_interpolated)):
 
         n = structure_interpolated.iloc[i]["n"]
+        if i < len(structure_interpolated) - 1:
+            n_next = structure_interpolated.iloc[i + 1]["n"]
+
         d = structure_interpolated.iloc[i]["d"]
-        position_global = structure_interpolated.iloc[i]["position"]
-
-        if n != n_previous:
-            T_n_n_previous = transfer_matrix_interface(n, n_previous)
-            vec = T_n_n_previous @ vec
-            n_previous = n
-            d = 0  # skip propagation in case of interface
-
-            M_total = T_n_n_previous @ M_total
+        position_global = structure_interpolated.iloc[i]["position"] + d
 
         P = transfer_matrix_layer(n, d, target_wavelength)
         vec = P @ vec
-
         M_total = P @ M_total
 
         field_position_arr.append(position_global)
         vec_arr.append(vec)
         n_field_arr.append(n)
 
+        if n != n_next:
+            T_n_next_n = transfer_matrix_interface(n_next, n)
+            vec = T_n_next_n @ vec
+            M_total = T_n_next_n @ M_total
+
+            # field_position_arr.append(position_global)
+            # vec_arr.append(vec)
+            # n_field_arr.append(n)
+
     # collect field components
     field_values_arr = np.array([vec[0] + vec[1] for vec in vec_arr])
-    field_forward_arr = np.array([vec[0] for vec in vec_arr])
-    field_backward_arr = np.array([vec[1] for vec in vec_arr])
+    field_values_forward_arr = np.array([vec[0] for vec in vec_arr])
+    field_values_backward_arr = np.array([vec[1] for vec in vec_arr])
 
     field_values_arr = np.array(field_values_arr)
     field_positions_arr = np.array(field_position_arr)
     n_field_arr = np.array(n_field_arr)
     field_properties_results = FieldProperties(
+        structure_interpolated=structure_interpolated,
         field_positions_arr=field_positions_arr,
         field_values_arr=field_values_arr,
+        field_values_forward_arr=field_values_forward_arr,
+        field_values_backward_arr=field_values_backward_arr,
         n_field_arr=n_field_arr,
     )
 
@@ -195,8 +210,10 @@ def calculate_electrical_field(
         T = calculate_transmission(M, n_incident, n_transmission)
 
         # not exactly pointing, because no norming to vacuum impedance
-        S_forward = np.array(np.real(n_field_arr)) * abs(field_forward_arr) ** 2
-        S_backward = np.array(np.real(n_field_arr)) * abs(field_backward_arr) ** 2
+        S_forward = np.array(np.real(n_field_arr)) * abs(field_values_forward_arr) ** 2
+        S_backward = (
+            np.array(np.real(n_field_arr)) * abs(field_values_backward_arr) ** 2
+        )
 
         # plotting
         plot_structure(structure)
@@ -228,9 +245,9 @@ def calculate_electrical_field(
         )
 
         # compare with results from M
-        plt.axhline(R, linestyle=":", label="R", color="tab:orange")
-        plt.axhline(T, linestyle=":", label="T", color="tab:blue")
-        plt.axhline(R + T, linestyle=":", label="R+T", color="black")
+        plt.axhline(R, linestyle=":", label=f"R={R:.3f}", color="tab:orange")
+        plt.axhline(T, linestyle=":", label=f"T={T:.3f}", color="tab:blue")
+        plt.axhline(R + T, linestyle=":", label=f"R+T={R+T:.3f}", color="black")
         plt.plot(
             field_position_arr,
             np.real(n_field_arr) / np.max(np.real(n_field_arr)),
