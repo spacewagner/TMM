@@ -25,7 +25,6 @@ from matplotlib import colormaps
 import time
 from scipy import constants as const
 from dataclasses import dataclass
-from typing import Tuple, List, Optional
 from scipy.signal import find_peaks, peak_widths, peak_prominences
 
 from TMM.optics_utils import (
@@ -50,7 +49,8 @@ from TMM.structure_builder import (
     build_DBR_structure,
     plot_structure,
     interpolate_structure,
-    flip_structure,VCSEL_embedding_active_region
+    flip_structure,
+    VCSEL_embedding_active_region,
 )
 
 from TMM.outputs import (
@@ -79,25 +79,23 @@ def analyse_electrical_field(
     structure_field_properties_results = calculate_electrical_field(
         structure, target_wavelength, position_resolution=position_resolution, Plot=Plot
     )
+
+    # TODO is this a valid approach for alpha_i?
     integral_full_imaginary = np.sum(
         np.imag(structure_field_properties_results.n_field_arr)
         * np.abs(structure_field_properties_results.field_values_arr) ** 2
+        * np.gradient(structure_field_properties_results.field_positions_arr)
     )
     alpha_i = coextinction_to_loss(integral_full_imaginary)
+
     integral_full_real = np.sum(
-        # np.real(structure_field_properties_results.n_field_arr)*
-        np.abs(structure_field_properties_results.field_values_arr)
-        ** 2
+        np.abs(structure_field_properties_results.field_values_arr) ** 2
+        * np.gradient(structure_field_properties_results.field_positions_arr)
     )
 
     idx_cavity = structure.loc[structure["name"] == "Cavity"].index
     idx_embedding = structure.loc[structure["name"] == "Embedding"].index
     idx_active_region = structure[structure["name"].str.contains("Active_Region")].index
-
-    # if not idx_cavity.empty:
-    #     print("Cavity without active region found")
-    # if not idx_embedding.empty:
-    #     print("Cavity with active region found")
 
     Gamma_z = 0.0
     cavity_start = None
@@ -130,6 +128,9 @@ def analyse_electrical_field(
         integral_cavity = np.sum(
             np.abs(structure_field_properties_results.field_values_arr[mask_cavity])
             ** 2
+            * np.gradient(
+                structure_field_properties_results.field_positions_arr[mask_cavity]
+            )
         )
         Gamma_z = (
             float(integral_cavity / integral_full_real)
@@ -151,6 +152,11 @@ def analyse_electrical_field(
                 structure_field_properties_results.field_values_arr[mask_active_region]
             )
             ** 2
+            * np.gradient(
+                structure_field_properties_results.field_positions_arr[
+                    mask_active_region
+                ]
+            )
         )
         Gamma_z_active_region = (
             float(integral_active_region / integral_cavity)
@@ -178,15 +184,15 @@ class TuningProperties:
     d_arr: np.ndarray
     R_arr: np.ndarray
     R_tuning_range: float
-
-    n_coating: Optional[float] = None
+    n_coating: float
+    N_arr: np.ndarray
 
 
 def analyse_AR_coating(
     structure, target_wavelength, n_coating=1.45, resolution=1e-9, Plot=True
 ):
-
-    d_coating_arr = np.arange(0, target_wavelength / (2 * n_coating), resolution)
+    d_coating_max = target_wavelength / (2 * n_coating)
+    d_coating_arr = np.arange(0, d_coating_max + 1e-12, resolution)
     R_arr = []
 
     for d_coating in d_coating_arr:
@@ -197,7 +203,7 @@ def analyse_AR_coating(
     R_tuning_range = max(R_arr) - min(R_arr)
     R_arr = np.array(R_arr)
     structure_coating_properties = TuningProperties(
-        d_coating_arr, R_arr, R_tuning_range, n_coating
+        d_coating_arr, R_arr, R_tuning_range, n_coating, N_arr=np.array([])
     )
 
     if Plot:
@@ -208,10 +214,36 @@ def analyse_AR_coating(
     return structure_coating_properties
 
 
-def analyse_etching(structure, target_wavelength, resolution=1e-9, Plot=True):
+def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=True):
 
-    d_etch_max = 2 * (structure.iloc[-2]["d"] + structure.iloc[-3]["d"])
-    d_etch_arr = np.arange(0, d_etch_max, resolution)
+    d1 = structure.iloc[-2]["d"]
+    d2 = structure.iloc[-3]["d"]
+    d_etch_max = N * (d1 + d2)
+    d_etch_arr = np.arange(0, d_etch_max + 1e-12, resolution)
+
+    d_arr = []
+    start_pos = 0
+    N_arr = []
+    N_pos = N
+    for i in range(int(N)):
+        d_arr_loc = np.arange(start_pos, start_pos + d1 + 1e-12, 1e-9)
+        d_arr.append(d_arr_loc)
+        N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
+        start_pos += d1
+        N_pos -= 0.5
+
+        d_arr_loc = np.arange(start_pos, start_pos + d2 + 1e-12, 1e-9)
+        d_arr.append(d_arr_loc)
+        N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
+        start_pos += d2
+        N_pos -= 0.5
+    if int(N) != N:
+        d_arr_loc = np.arange(start_pos, start_pos + d1 + 1e-12, 1e-9)
+        d_arr.append(d_arr_loc)
+        N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
+
+    d_etch_arr = np.concatenate(d_arr)
+    N_arr = np.concatenate(N_arr)
 
     R_arr = []
     for d_etch in d_etch_arr:
@@ -223,7 +255,9 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, Plot=True):
     top_layer_d_idx = np.argmin(abs(d_etch_arr - top_layer_d))
     R_tuning_range = abs(R_arr[top_layer_d_idx] - R_arr[0])
     R_arr = np.array(R_arr)
-    structure_etch_properties = TuningProperties(d_etch_arr, R_arr, R_tuning_range)
+    structure_etch_properties = TuningProperties(
+        d_etch_arr, R_arr, R_tuning_range, n_coating=0.0, N_arr=N_arr
+    )
 
     if Plot:
         plt.plot(d_etch_arr * 1e9, R_arr)
@@ -512,7 +546,7 @@ def analyse_reflectivity_tuning(
             structure_coating_properties.d_arr[-1] * 1e9,
             alpha=0.2,
             color="tab:green",
-            label="AR Coating",
+            label=n_coating,
         )
 
         start_position = structure_etching_properties.d_arr[0]
@@ -597,7 +631,7 @@ def analyse_DBR(
     """
 
     DBR_optical_properties_result = calculate_optical_properties(
-        DBR, wavelength_arr, Plot=Plot
+        DBR, wavelength_arr, Plot=False
     )
 
     DBR_field_properties_results = calculate_electrical_field(
@@ -651,7 +685,7 @@ def analyse_DBR(
             (interface_position - l_eff) * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {l_eff*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {l_eff*1e6:.3f}$\\mu m$ ",
         )
         plt.legend()
         plt.show()
@@ -1239,7 +1273,8 @@ class CavityTuningProperties:
 
     structure: pd.DataFrame
 
-    alpha_i: float
+    alpha_i_arr: np.ndarray
+    Gamma_z: float
 
     d_coating_arr: np.ndarray
     R_coating_arr: np.ndarray
@@ -1250,8 +1285,9 @@ class CavityTuningProperties:
     v_gr_coating_arr: np.ndarray
     alpha_m_coating_arr: np.ndarray
     alpha_m_coating_range: float
-    photon_lifetime_coating_arr: np.ndarray
+    photon_lifetime_coating_arr_arr: np.ndarray
     photon_lifetime_coating_range: float
+    g_threshold_coating_arr_arr: np.ndarray
 
     d_etching_arr: np.ndarray
     R_etching_arr: np.ndarray
@@ -1261,16 +1297,17 @@ class CavityTuningProperties:
     v_gr_etch_arr: np.ndarray
     alpha_m_etch_arr: np.ndarray
     alpha_m_etch_range: float
-    photon_lifetime_etch_arr: np.ndarray
+    photon_lifetime_etch_arr_arr: np.ndarray
     photon_lifetime_etch_range: float
+    g_threshold_etch_arr_arr: np.ndarray
 
 
 def analyse_VCSEL_lifetime_tuning(
     VCSEL,
     target_wavelength,
     n_coating=1.45,
-    alpha_i=5e2,
     resolution=1e-9,
+    alpha_i_arr=[0, 5e2, 10e2, 20e2],
     Plot=True,
     Print=True,
     Save_to="pdf",
@@ -1289,7 +1326,13 @@ def analyse_VCSEL_lifetime_tuning(
 
     TODO
 
+    Expand for g_threshold by collecting Gamma_z and calculating (alpha_i-alpha_mirror)/Gamma_z. This needs a full electrical analysis of each point, significantly increasing. Maybe Gamma_z = const. can be justified for approximation.
+
     """
+
+    results_electrical_field = analyse_electrical_field(
+        VCSEL, target_wavelength, Plot=False, Print=False
+    )
 
     (
         n_bottom_1,
@@ -1395,10 +1438,18 @@ def analyse_VCSEL_lifetime_tuning(
         DBR_top_d1 + DBR_top_d2
     )
 
+    Gamma_z = results_electrical_field.Gamma_z
+    idx_active_region = VCSEL[VCSEL["name"].str.contains("Active_Region")].index
+
+    if idx_active_region.empty != True:
+        Gamma_z = results_electrical_field.Gamma_z_active_region
+
     alpha_m_etch_arr = []
     n_cavity_eff_etch_arr = []
     v_gr_etch_arr = []
-    photon_lifetime_etch_arr = []
+    photon_lifetime_etch_arr_arr = [[] for _ in range(len(alpha_i_arr))]
+    g_threshold_etch_arr_arr = [[] for _ in range(len(alpha_i_arr))]
+
     for i in range(len(DBR_top_etching_properties.d_arr)):
 
         alpha_m_etch = VCSEL_mirror_loss(
@@ -1419,18 +1470,23 @@ def analyse_VCSEL_lifetime_tuning(
         v_gr = const.c / n_cavity_eff
         v_gr_etch_arr.append(v_gr)
 
-        photon_lifetime_etch = VCSEL_photon_lifetime(v_gr, alpha_m_etch, alpha_i)
-        photon_lifetime_etch_arr.append(photon_lifetime_etch)
+        for i, alpha_i in enumerate(alpha_i_arr):
+            photon_lifetime_etch = VCSEL_photon_lifetime(v_gr, alpha_m_etch, alpha_i)
+            photon_lifetime_etch_arr_arr[i].append(photon_lifetime_etch)
+
+            g_threshold_etch = VCSEL_threshold_gain(Gamma_z, alpha_m_etch, alpha_i)
+            g_threshold_etch_arr_arr[i].append(g_threshold_etch)
 
     alpha_m_etch_range = np.max(alpha_m_etch_arr) - np.min(alpha_m_etch_arr)
-    photon_lifetime_etch_range = np.max(photon_lifetime_etch_arr) - np.min(
-        photon_lifetime_etch_arr
+    photon_lifetime_etch_range = np.max(photon_lifetime_etch_arr_arr[0]) - np.min(
+        photon_lifetime_etch_arr_arr[0]
     )
 
     alpha_m_coating_arr = []
     n_cavity_eff_coating_arr = []
     v_gr_coating_arr = []
-    photon_lifetime_coating_arr = []
+    photon_lifetime_coating_arr_arr = [[] for _ in range(len(alpha_i_arr))]
+    g_threshold_coating_arr_arr = [[] for _ in range(len(alpha_i_arr))]
     for i in range(len(DBR_top_coating_properties.d_arr)):
 
         alpha_m_coating = VCSEL_mirror_loss(
@@ -1451,29 +1507,43 @@ def analyse_VCSEL_lifetime_tuning(
         v_gr = const.c / n_cavity_eff
         v_gr_coating_arr.append(v_gr)
 
-        photon_lifetime_coating = VCSEL_photon_lifetime(v_gr, alpha_m_coating, alpha_i)
-        photon_lifetime_coating_arr.append(photon_lifetime_coating)
+        for i, alpha_i in enumerate(alpha_i_arr):
+
+            photon_lifetime_coating = VCSEL_photon_lifetime(
+                v_gr, alpha_m_coating, alpha_i
+            )
+            photon_lifetime_coating_arr_arr[i].append(photon_lifetime_coating)
+
+            g_threshold_coating = VCSEL_threshold_gain(
+                Gamma_z, alpha_m_coating, alpha_i
+            )
+            g_threshold_coating_arr_arr[i].append(g_threshold_coating)
 
     alpha_m_coating_range = np.max(alpha_m_coating_arr) - np.min(alpha_m_coating_arr)
-    photon_lifetime_coating_range = np.max(photon_lifetime_coating_arr) - np.min(
-        photon_lifetime_coating_arr
+    photon_lifetime_coating_range = np.max(photon_lifetime_coating_arr_arr[0]) - np.min(
+        photon_lifetime_coating_arr_arr[0]
     )
+
+    alpha_i_arr = np.array(alpha_i_arr)
 
     L_eff_coating_arr = np.array(L_eff_coating_arr)
     n_cavity_eff_coating_arr = np.array(n_cavity_eff_coating_arr)
     v_gr_coating_arr = np.array(v_gr_coating_arr)
     alpha_m_coating_arr = np.array(alpha_m_coating_arr)
-    photon_lifetime_coating_arr = np.array(photon_lifetime_coating_arr)
+    photon_lifetime_coating_arr_arr = np.array(photon_lifetime_coating_arr_arr)
+    g_threshold_coating_arr_arr = np.array(g_threshold_coating_arr_arr)
 
     L_eff_etch_arr = np.array(L_eff_etch_arr)
     n_cavity_eff_etch_arr = np.array(n_cavity_eff_etch_arr)
     v_gr_etch_arr = np.array(v_gr_etch_arr)
     alpha_m_etch_arr = np.array(alpha_m_etch_arr)
-    photon_lifetime_etch_arr = np.array(photon_lifetime_etch_arr)
+    photon_lifetime_etch_arr_arr = np.array(photon_lifetime_etch_arr_arr)
+    g_threshold_etch_arr_arr = np.array(g_threshold_etch_arr_arr)
 
     VCSEL_cavity_tuning_properties = CavityTuningProperties(
         structure=VCSEL,
-        alpha_i=alpha_i,
+        alpha_i_arr=alpha_i_arr,
+        Gamma_z=Gamma_z,
         d_coating_arr=DBR_top_coating_properties.d_arr,
         R_coating_arr=DBR_top_coating_properties.R_arr,
         R_tuning_range_coating=DBR_top_coating_properties.R_tuning_range,
@@ -1483,8 +1553,9 @@ def analyse_VCSEL_lifetime_tuning(
         v_gr_coating_arr=v_gr_coating_arr,
         alpha_m_coating_arr=alpha_m_coating_arr,
         alpha_m_coating_range=alpha_m_coating_range,
-        photon_lifetime_coating_arr=photon_lifetime_coating_arr,
+        photon_lifetime_coating_arr_arr=photon_lifetime_coating_arr_arr,
         photon_lifetime_coating_range=photon_lifetime_coating_range,
+        g_threshold_coating_arr_arr=g_threshold_coating_arr_arr,
         d_etching_arr=DBR_top_etching_properties.d_arr,
         R_etching_arr=DBR_top_etching_properties.R_arr,
         R_tuning_range_etching=DBR_top_etching_properties.R_tuning_range,
@@ -1493,8 +1564,9 @@ def analyse_VCSEL_lifetime_tuning(
         v_gr_etch_arr=v_gr_etch_arr,
         alpha_m_etch_arr=alpha_m_etch_arr,
         alpha_m_etch_range=alpha_m_etch_range,
-        photon_lifetime_etch_arr=photon_lifetime_etch_arr,
+        photon_lifetime_etch_arr_arr=photon_lifetime_etch_arr_arr,
         photon_lifetime_etch_range=photon_lifetime_etch_range,
+        g_threshold_etch_arr_arr=g_threshold_etch_arr_arr,
     )
 
     if Plot:
@@ -1506,122 +1578,3 @@ def analyse_VCSEL_lifetime_tuning(
         print_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties)
 
     return VCSEL_cavity_tuning_properties
-
-
-@dataclass
-class ActiveRegionEmbeddingProperties:
-    d_embedding_arr: np.ndarray
-    Gamma_z_arr: np.ndarray
-    Gamma_z_active_region_arr: np.ndarray
-
-    d_optimimum_arr: np.ndarray
-    Gamma_z_optimimum_arr: np.ndarray
-
-    d_active_region: float
-
-def optimize_embedding_thickness(VCSEL, active_region, target_wavelength, d_min, d_max, d_resolution=20):
-
-    d_embedding_arr = np.linspace(d_min, d_max, d_resolution)
-    Gamma_z_arr = []
-    Gamma_z_active_region_arr = []
-    position_resolution = 100
-
-    d_active_region = active_region["d"].sum()
-
-    for d_embedding in d_embedding_arr:
-        VCSEL_modified = VCSEL_embedding_active_region(
-            VCSEL, active_region, d_embedding=d_embedding
-        )
-        idx_embedding = VCSEL_modified.loc[VCSEL_modified["name"] == "Embedding"].index
-        results = analyse_electrical_field(
-            VCSEL_modified,
-            target_wavelength,
-            position_resolution=position_resolution,
-            Plot=False,
-            Print=False,
-        )
-        plt.plot(
-            results.field_positions_arr[
-                idx_embedding[0]
-                * position_resolution : (idx_embedding[1] + 1)
-                * position_resolution
-            ],
-            np.abs(
-                results.field_values_arr[
-                    idx_embedding[0]
-                    * position_resolution : (idx_embedding[1] + 1)
-                    * position_resolution
-                ]
-            )
-            ** 2
-            / np.max(np.abs(results.field_values_arr) ** 2),
-        )
-        Gamma_z = results.Gamma_z
-        Gamma_z_arr.append(Gamma_z)
-
-        Gamma_z_active_region = results.Gamma_z_active_region
-        Gamma_z_active_region_arr.append(Gamma_z_active_region)
-
-    plt.show()
-
-    Gamma_z_arr = np.array(Gamma_z_arr)
-    Gamma_z_active_region_arr = np.array(Gamma_z_active_region_arr)
-
-    Gamma_z_optimimum_arr = []
-    Gamma_z_optimimum_positions_arr = []
-
-    peaks, properties = find_peaks(
-        Gamma_z_arr,
-        height=0,
-        threshold=None,
-        distance=1,
-    )
-
-    Gamma_z_optimimum_arr = Gamma_z_arr[peaks]
-    d_optimimum_arr = d_embedding_arr[peaks]
-
-    results = ActiveRegionEmbeddingProperties(
-        d_embedding_arr=d_embedding_arr,
-        Gamma_z_arr=Gamma_z_arr,
-        Gamma_z_active_region_arr=Gamma_z_active_region_arr,
-        d_optimimum_arr=d_optimimum_arr,
-        Gamma_z_optimimum_arr=Gamma_z_optimimum_arr,
-        d_active_region=d_active_region,
-    )
-
-    plt.plot(
-        (results.d_embedding_arr + results.d_active_region) * 1e9,
-        results.Gamma_z_arr,
-        label="Γ Cavity",
-    )
-    plt.plot(
-        (results.d_embedding_arr + results.d_active_region) * 1e9,
-        results.Gamma_z_active_region_arr,
-        label="Γ Active Region",
-    )
-
-    for pos, val in zip(results.d_optimimum_arr, results.Gamma_z_optimimum_arr):
-        plt.plot((pos + results.d_active_region) * 1e9, val, marker="o", color="red")
-
-    plt.xlabel("Cavity Length (nm)")
-    plt.ylabel("Mode Confinement Γz")
-    plt.legend()
-
-    ax2 = plt.gca().twiny()
-    ax2.set_xlim(plt.xlim())
-    ax2.set_xlabel("Embedding Thickness (nm)")
-    ax2.tick_params(axis="x")
-
-    cavity_lengths = plt.gca().get_xticks()
-    ax2.set_xticks(cavity_lengths)
-    ax2.set_xticklabels(
-        np.linspace(
-            results.d_embedding_arr[0] * 1e9,
-            results.d_embedding_arr[-1] * 1e9,
-            len(cavity_lengths),
-        ).round(1)
-    )
-
-    plt.tight_layout()
-    plt.show()
-    return results

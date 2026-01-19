@@ -44,18 +44,21 @@ from TMM.analysis import (
     analyse_VCSELs_DBRs,
     analyse_electrical_field,
     analyse_VCSEL_lifetime_tuning,
-    optimize_embedding_thickness,
     VCSEL_embedding_active_region,
 )
+
+from TMM.optimizations import optimize_embedding_thickness
+
+from TMM.optics_utils import refractive_index_AlGaAs_at_1310, refractive_index_SiO2
 
 # %%
 """
 Build and plot a VCSEL Structure.
 
 """
-
-GaAs = 3.52
-AlAs = 2.95
+target_wavelength = 1310e-9
+GaAs = refractive_index_AlGaAs_at_1310(0)
+AlAs = refractive_index_AlGaAs_at_1310(100)
 
 n_bottom_1 = GaAs
 n_bottom_2 = AlAs
@@ -63,10 +66,9 @@ N_bottom = 35.5
 n_top_1 = GaAs
 n_top_2 = AlAs
 N_top = 21.5
-n_cavity = 3.2
+n_cavity = 3.205
 n_substrate = GaAs
 n_air = 1
-target_wavelength = 1310e-9
 
 VCSEL = build_VCSEL_structure(
     n_bottom_1,
@@ -211,8 +213,8 @@ VCSEL_etching_properties = analyse_etching(VCSEL, target_wavelength)
 Apply an AR coating.
 
 """
-
-VCSEL_AR = apply_AR_coating(VCSEL, 1.45, 100e-9)
+n_coating = refractive_index_SiO2(target_wavelength)
+VCSEL_AR = apply_AR_coating(VCSEL, n_coating, 100e-9)
 plot_structure(VCSEL_AR)
 plt.show()
 
@@ -236,50 +238,40 @@ VCSEL_temperature_properties = calculate_temperature_shift(
     VCSEL, target_wavelength, T_arr
 )
 
-# %% Lifetime Tuning (slow)
-
+# %% Lifetime Tuning
+n_coating = refractive_index_SiO2(target_wavelength)
+alpha_i_arr = [0, 5e2, 10e2, 20e2]
 VCSEL_cavity_tuning_properties = analyse_VCSEL_lifetime_tuning(
-    VCSEL, target_wavelength, n_coating=1.45, alpha_i=10e2, resolution=2e-9
+    VCSEL,
+    target_wavelength,
+    n_coating=n_coating,
+    alpha_i_arr=alpha_i_arr,
+    resolution=2e-9,
 )
 
-
 # %% Define active region
+n_quantum_wells = [3.53, 3.49] * 24
+d_quantum_wells = [0.8e-9, 0.2e-9] * 24
 
-n_arr = [3.5, 3.25, 3.5, 3.2, 3.5]
-d_arr = [100e-9, 100e-9, 200e-9, 150e-9, 20e-9]
-
-n_arr = [3.3]
-d_arr = [100e-9]
+n_arr = [3.53, 3.49, 3.24, 3.49, *n_quantum_wells, 3.49, 3.205, 3.53, 3.205]
+d_arr = [30e-9, 15e-9, 35e-9, 4e-9, *d_quantum_wells, 4e-9, 50e-9, 10e-9, 21e-9]
 
 active_region = build_active_region(n_arr, d_arr)
 plot_structure(active_region)
-
 # %% Find cavity length for optimum confinement
 results = optimize_embedding_thickness(
     VCSEL,
     active_region,
     target_wavelength=target_wavelength,
-    d_min=508.5e-9,
-    d_max=509.4e-9,
-    d_resolution=50,
+    d_min=0e-9,
+    d_max=500e-9,
 )
 
 # %% Build VCSEL with active region, with optimum cavity length
 VCSEL_modified = VCSEL_embedding_active_region(
-    VCSEL, active_region, results.d_optimimum_arr[0]
+    VCSEL, active_region, results.d_optimum_arr[0]
 )
 
 results_electrical_field = calculate_electrical_field(
-    VCSEL_modified, target_wavelength, Plot=False
+    VCSEL_modified, target_wavelength, Plot=True
 )
-plt.plot(
-    results_electrical_field.field_positions_arr * 1e6,
-    np.abs(results_electrical_field.field_values_arr) ** 2
-    / np.max(np.abs(results_electrical_field.field_values_arr) ** 2)
-    * np.max(results_electrical_field.n_field_arr),
-)
-plt.plot(
-    results_electrical_field.field_positions_arr * 1e6,
-    results_electrical_field.n_field_arr,
-)
-plt.xlim(8, 9)

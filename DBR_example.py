@@ -9,6 +9,7 @@ Compare to examples from Chuang and Coldren
 """
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from TMM.structure_builder import (
     build_DBR_structure,
@@ -23,7 +24,11 @@ from TMM.analysis import (
     analyse_electrical_field,
     analyse_DBR,
     analyse_reflectivity_tuning,
+    analyse_etching,
 )
+
+from TMM.optics_utils import refractive_index_AlGaAs_at_940, refractive_index_SiO2
+
 
 # %%
 
@@ -32,11 +37,15 @@ from TMM.analysis import (
 Define DBR structure
 
 """
+target_wavelength = 940e-9
+GaAs = refractive_index_AlGaAs_at_940(0)
+AlAs = refractive_index_AlGaAs_at_940(100)
 
-GaAs = 3.52
-AlAs = 2.95
-
-target_wavelength = 980e-9
+n1 = GaAs
+n2 = AlAs
+n_substrate = 3.3
+n_air = 1
+N = 21.5
 
 # Set wavelength range for the spectra by using the adaptive mesh function
 wavelength_arr = wavelength_arr_adaptive_mesh(
@@ -44,14 +53,16 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
 )
 
 # Build DBR structure
-DBR = build_DBR_structure(GaAs, AlAs, 21.5, target_wavelength, n_substrate=3.3, n_air=1)
-
+DBR = build_DBR_structure(
+    n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
+)
 # Plot the DBR structure
 plot_structure(DBR)
 
+# %%
 # run full analysis on the DBR
 DBR_results = analyse_DBR(DBR, target_wavelength, wavelength_arr)
-DBR_results.l_eff
+
 # %%
 
 """
@@ -60,11 +71,14 @@ Flip the structure to imitate incident wave from the opposite side.
 """
 
 DBR_flipped = flip_structure(DBR)
+plot_structure(DBR_flipped)
+plt.show()
 
 DBR_flipped_results = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
 
 # %% Reflectivity tuning
-analyse_reflectivity_tuning(DBR, target_wavelength)
+n_coating = refractive_index_SiO2(target_wavelength)
+analyse_reflectivity_tuning(DBR, target_wavelength, n_coating=n_coating)
 
 # %%
 
@@ -102,7 +116,7 @@ for N in range(25):
     N += 1
     DBR = build_DBR_structure(n1, n2, N, target_wavelength)
     DBR_optical_properties_result = calculate_optical_properties(
-        DBR, wavelength_arr, Plot=False
+        DBR, [target_wavelength], Plot=False
     )
     N_arr_even.append(N)
     R_arr_even.append(max(DBR_optical_properties_result.R_arr))
@@ -116,12 +130,6 @@ plt.legend()
 
 # %% Reflectivity over N for odd amount of layers
 
-"""
-
-Formula seems to be valid for big N only
-
-"""
-
 N_arr_odd = []
 R_arr_odd = []
 
@@ -130,7 +138,7 @@ for N in range(25):
     N += 0.5  # for uneven
     DBR = build_DBR_structure(2.95, 3.52, N, target_wavelength)
     DBR_optical_properties_result = calculate_optical_properties(
-        DBR, wavelength_arr, Plot=False
+        DBR, [target_wavelength], Plot=False
     )
     N_arr_odd.append(N)
     R_arr_odd.append(max(DBR_optical_properties_result.R_arr))
@@ -157,8 +165,88 @@ plt.ylabel("Reflectivity R")
 plt.legend()
 plt.xlim(18, 25)
 plt.ylim(0.97, 1.0)
-# %% Example Chuang p.218 fig. 5.14
-import numpy as np
+
+# %%
+
+"""
+
+Compare etching properties from TMM with analytical solution
+
+"""
+DBR_etching_properties = analyse_etching(DBR, target_wavelength, N=N)
+
+plt.plot(DBR_etching_properties.d_arr, DBR_etching_properties.R_arr)
+plt.show()
+plt.plot(DBR_etching_properties.N_arr, DBR_etching_properties.R_arr)
+plt.show()
+
+# %%
+N_arr_even = []
+R_arr_even = []
+
+for N in range(26):
+    N += 0
+    DBR = build_DBR_structure(
+        n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
+    )
+    DBR_optical_properties_result = calculate_optical_properties(
+        DBR, [target_wavelength], Plot=False
+    )
+    N_arr_even.append(N)
+    R_arr_even.append(max(DBR_optical_properties_result.R_arr))
+
+plt.plot(N_arr_even, R_arr_even, label="Result", linestyle="", marker=".")
+R_theory_even = [R_theoretical(N, n1, n2, n_substrate, n_air) for N in N_arr_even]
+plt.plot(N_arr_even, R_theory_even, label="Theory")
+plt.xlabel("Amount of mirror pairs N")
+plt.ylabel("Reflectivity R")
+plt.legend()
+
+# %% Reflectivity over N for odd amount of layers
+
+N_arr_odd = []
+R_arr_odd = []
+
+for N in range(26):
+    N += 0.0  # to skip N = 0
+    N += 0.5  # for uneven
+    DBR = build_DBR_structure(
+        n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
+    )
+    DBR_optical_properties_result = calculate_optical_properties(
+        DBR, [target_wavelength], Plot=False
+    )
+    N_arr_odd.append(N)
+    R_arr_odd.append(max(DBR_optical_properties_result.R_arr))
+
+plt.plot(N_arr_odd, R_arr_odd, label="Result", linestyle="", marker=".")
+R_theory_odd = [R_theoretical(N, n1, n2, n_substrate, n_air) for N in N_arr_odd]
+plt.plot(N_arr_odd, R_theory_odd, label="Theory")
+plt.xlabel("Amount of mirror pairs N")
+plt.ylabel("Reflectivity R")
+plt.legend()
+
+# %% Comparison
+plt.plot(
+    DBR_etching_properties.N_arr,
+    DBR_etching_properties.R_arr,
+    label="TMM Results",
+)
+plt.plot(N_arr_even, R_theory_even, marker=".", label="R(2N=even)")
+plt.plot(N_arr_odd, R_theory_odd, marker=".", label="R(2N=odd)")
+
+
+plt.xlabel("Amount of mirror pairs N")
+plt.ylabel("Reflectivity R")
+plt.legend()
+plt.ylim(0, 1)
+# %%
+
+"""
+Compare with examples from the literature
+Example Chuang p.218 fig. 5.14
+
+"""
 
 target_wavelength = 980e-9
 DBR = build_DBR_structure(3.52, 2.95, 20, target_wavelength, n_air=3.52)
@@ -167,7 +255,14 @@ plot_structure(DBR)
 
 wavelength_arr = np.arange(820e-9, 1230e-9, 1e-9)
 calculate_optical_properties(DBR, wavelength_arr)
-# %% Example Coldren p.120 fig. 3.14
+# %%
+
+"""
+Compare with examples from the literature
+Example Coldren p.120 fig. 3.14
+
+"""
+
 target_wavelength = 980e-9
 n_high = 3.52  # GaAs @ 940nm chuang p. 218
 n_low_arr = [2.88, 3.35, 3.45]  # AlAs @ 940nm

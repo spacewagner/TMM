@@ -224,7 +224,6 @@ def plot_structure(structure, show_cavity_color: bool = True):
         structure_interpolated["n"]
     )  # only plot Re(n)
 
-    plt.figure()
     plt.title("Layer structure (refractive index vs position)")
 
     plt.plot(
@@ -456,14 +455,27 @@ def VCSEL_embedding_active_region(VCSEL, active_region, d_embedding=0.0, offset=
     return VCSEL_modified
 
 
-def build_active_region(n_arr, d_arr):
+def build_active_region(n_arr, d_arr, active_region_idx=None):
+
+    if active_region_idx == None:
+        active_region_idx = [0]
+    name_arr = [
+        (
+            "Modelled_Region_" + str(i) + "_Active_Region"
+            if i in active_region_idx
+            else "Modelled_Region_" + str(i)
+        )
+        for i in range(len(n_arr))
+    ]
+
     active_region = pd.DataFrame(
         {
-            "name": ["Active_Region_" + str(i) for i in range(len(n_arr))],
+            "name": name_arr,
             "n": n_arr,
             "d": d_arr,
             "position": [0] * len(n_arr),
         }
     )
     active_region = reset_position(active_region)
+
     return active_region

@@ -12,7 +12,6 @@ Chuang: Physics of Photonic Devices, Chapter 5.7 - 5.9 "Matrix Optics"
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from typing import Tuple, List, Optional
 import pandas as pd
 
 from TMM.optics_utils import (
@@ -48,11 +47,9 @@ class FieldProperties:
     n_field_arr: np.ndarray
 
     # Optional
-    Gamma_z: Optional[float] = None  # Optical confinement factor (in cavity)
-    Gamma_z_active_region: Optional[float] = (
-        None  # Optical confinement factor (in active region)
-    )
-    alpha_i: Optional[float] = None  # Internal loss [1/m]
+    Gamma_z: float  # Optical confinement factor (in cavity)
+    Gamma_z_active_region: float
+    alpha_i: float  # Internal loss [1/m]
 
 
 # %% Methods
@@ -199,6 +196,9 @@ def calculate_electrical_field(
         field_values_forward_arr=field_values_forward_arr,
         field_values_backward_arr=field_values_backward_arr,
         n_field_arr=n_field_arr,
+        Gamma_z=0.0,
+        Gamma_z_active_region=0.0,
+        alpha_i=0.0,
     )
 
     if Plot:

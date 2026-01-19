@@ -50,7 +50,7 @@ def transfer_matrix_layer(n: complex, d: float, wavelength: float) -> np.ndarray
     """
     k = 2 * np.pi * n / wavelength
     phi = k * d
-    # the notation -1j/+1j sets +- sign in extinction coefficient. Should be diag(-, +)
+    # the notation +1j/-1j sets +- sign in extinction coefficient. diag(+, -) is physically correct. But since my algorithm sweeps the position from left to right, I need to swap the signs here. There has been no observation of unphysical results by this approach so far, it is solely for convenience of the electrical field solver algorithm.
     return np.array([[np.exp(-1j * phi), 0.0], [0.0, np.exp(1j * phi)]], dtype=complex)
 
 
@@ -189,9 +189,46 @@ def VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i):
     return 1 / (v_gr * (alpha_i + alpha_m))
 
 
-def VCSEL_threshold_gain(Gamma, alpha_m, alpha_i=5e2):
-    return (alpha_i + alpha_m) / Gamma
+def VCSEL_threshold_gain(Gamma_z, alpha_m, alpha_i=5e2):
+    return (alpha_i + alpha_m) / Gamma_z
 
 
 def coextinction_to_loss(kappa):
     return (4 * np.pi / const.c) * kappa
+
+
+def refractive_index_AlGaAs_at_1310(x):
+    """
+    Docstring for refractive_index_at_1310
+
+    :param x: Al_x Ga_{1-x} As
+    Fit parameters derived from data available at https://refractiveindex.info
+    """
+    return -0.005004524072049238 * x + 3.4146696956539913
+
+
+def refractive_index_AlGaAs_at_940(x):
+    """
+    Docstring for refractive_index_at_940
+
+    :param x: Al_x Ga_{1-x} As
+    Fit parameters derived from data available at https://refractiveindex.info
+    """
+    return -0.005497270288921783 * x + 3.516202560685546
+
+
+def refractive_index_SiO2(wl):
+    """
+    Calculate refractive index of fused silica (SiO₂) using Sellmeier equation.
+    wl: wavelength in meters -> to um for formula
+    Returns: refractive index n
+    https://refractiveindex.info/?shelf=main&book=SiO2&page=Malitson
+    """
+
+    wl *= 1e6
+
+    a = 0.6961663 * wl**2 / (wl**2 - 0.0684043**2)
+    b = 0.4079426 * wl**2 / (wl**2 - 0.1162414**2)
+    c = 0.8974794 * wl**2 / (wl**2 - 9.896161**2)
+    n = np.sqrt(a + b + c + 1)
+    return n
