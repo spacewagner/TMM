@@ -25,7 +25,6 @@ from matplotlib import colormaps
 import time
 from scipy import constants as const
 from dataclasses import dataclass
-from scipy.signal import find_peaks, peak_widths, peak_prominences
 
 from TMM.optics_utils import (
     wavelength_to_frequency,
@@ -61,7 +60,11 @@ from TMM.outputs import (
 
 
 def analyse_electrical_field(
-    structure, target_wavelength, position_resolution=100, Print=True, Plot=True
+    structure,
+    target_wavelength,
+    position_resolution=100,
+    Print=True,
+    Plot=True,
 ):
     """
     Docstring for analyse_electrical_field
@@ -71,14 +74,14 @@ def analyse_electrical_field(
     :param Print: Description
     :param Plot: Description
 
-    TODO
-    Confinement should just be calculated over the active region, which is a segment of the cavity
-
     """
 
     structure_field_properties_results = calculate_electrical_field(
         structure, target_wavelength, position_resolution=position_resolution, Plot=Plot
     )
+
+    structure_interpolated = structure_field_properties_results.structure_interpolated
+    # print(structure_field_properties_results.structure_interpolated)
 
     # TODO is this a valid approach for alpha_i?
     integral_full_imaginary = np.sum(
@@ -95,13 +98,13 @@ def analyse_electrical_field(
 
     idx_cavity = structure.loc[structure["name"] == "Cavity"].index
     idx_embedding = structure.loc[structure["name"] == "Embedding"].index
-    idx_active_region = structure[structure["name"].str.contains("Active_Region")].index
+    idx_active_region = structure_interpolated[
+        structure_interpolated["name"].str.contains("Active_Region")
+    ].index
 
     Gamma_z = 0.0
     cavity_start = None
     cavity_stop = None
-    active_region_start = None
-    active_region_stop = None
 
     if not idx_cavity.empty:
         cavity_start = structure.iloc[idx_cavity[0]]["position"]
@@ -109,16 +112,11 @@ def analyse_electrical_field(
         cavity_stop = cavity_start + cavity_d
 
     if not idx_embedding.empty:
+
         cavity_start = structure.iloc[idx_embedding[0]]["position"]
         cavity_stop = (
             structure.iloc[idx_embedding[1]]["position"]
             + structure.iloc[idx_embedding[1]]["d"]
-        )
-
-        active_region_start = structure.iloc[idx_active_region[0]]["position"]
-        active_region_stop = (
-            structure.iloc[idx_active_region[-1]]["position"]
-            + structure.iloc[idx_active_region[-1]]["d"]
         )
 
     if cavity_start != None and cavity_stop != None:
@@ -137,26 +135,15 @@ def analyse_electrical_field(
             if integral_full_real != 0
             else 0.0
         )
-
+        
     Gamma_z_active_region = 0.0
+    if not idx_active_region.empty:
+        idx_active_region = idx_active_region.values
 
-    if active_region_start != None and active_region_stop != None:
-        mask_active_region = (
-            structure_field_properties_results.field_positions_arr
-            >= active_region_start
-        ) & (
-            structure_field_properties_results.field_positions_arr <= active_region_stop
-        )
+        # here, taking the gradient is not suficient, since in case of segment wise integration (e.g. for quantum well active region), the jump in the position array will affect the gradient. The layer thickness d of the filtered structure_interpolated dataframe is sufficient and matches the index of the field_values_arr
         integral_active_region = np.sum(
-            np.abs(
-                structure_field_properties_results.field_values_arr[mask_active_region]
-            )
-            ** 2
-            * np.gradient(
-                structure_field_properties_results.field_positions_arr[
-                    mask_active_region
-                ]
-            )
+            np.abs(structure_field_properties_results.field_values_arr[idx_active_region]) ** 2
+            * structure_interpolated.iloc[idx_active_region]["d"]
         )
         Gamma_z_active_region = (
             float(integral_active_region / integral_cavity)
@@ -1308,6 +1295,8 @@ def analyse_VCSEL_lifetime_tuning(
     n_coating=1.45,
     resolution=1e-9,
     alpha_i_arr=[0, 5e2, 10e2, 20e2],
+    active_region=None,
+    d_embedding=None,
     Plot=True,
     Print=True,
     Save_to="pdf",
@@ -1330,8 +1319,20 @@ def analyse_VCSEL_lifetime_tuning(
 
     """
 
+    if (
+        active_region is not None
+        and not active_region.empty
+        and d_embedding is not None
+    ):
+        # Your original code here
+        VCSEL_modified = VCSEL_embedding_active_region(
+            VCSEL, active_region, d_embedding
+        )
+    else:
+        VCSEL_modified = VCSEL
+
     results_electrical_field = analyse_electrical_field(
-        VCSEL, target_wavelength, Plot=False, Print=False
+        VCSEL_modified, target_wavelength, Plot=False, Print=False
     )
 
     (
@@ -1439,8 +1440,10 @@ def analyse_VCSEL_lifetime_tuning(
     )
 
     Gamma_z = results_electrical_field.Gamma_z
-    idx_active_region = VCSEL[VCSEL["name"].str.contains("Active_Region")].index
 
+    idx_active_region = VCSEL_modified[
+        VCSEL_modified["name"].str.contains("Active_Region")
+    ].index
     if idx_active_region.empty != True:
         Gamma_z = results_electrical_field.Gamma_z_active_region
 

@@ -45,6 +45,7 @@ class FieldProperties:
     field_values_forward_arr: np.ndarray
     field_values_backward_arr: np.ndarray
     n_field_arr: np.ndarray
+    layer_name_field_arr: np.ndarray
 
     # Optional
     Gamma_z: float  # Optical confinement factor (in cavity)
@@ -150,14 +151,17 @@ def calculate_electrical_field(
 
     n_previous = structure_interpolated.iloc[0]["n"]
 
+    # attention: the resulting array will be 1 element longer then the structure_interpolated df. This can lead to misunderstanding when comparing indices. Offset needs to be remembered. See analyze_electrical_field.
     field_position_arr = [0.0]
     vec_arr = [vec]
     n_field_arr = [n_previous]
+    layer_name_field_arr = [structure_interpolated.iloc[0]["name"]]
 
     # go backwards through structure
     for i in range(len(structure_interpolated)):
 
         n = structure_interpolated.iloc[i]["n"]
+        layer_name = structure_interpolated.iloc[i]["name"]
         if i < len(structure_interpolated) - 1:
             n_next = structure_interpolated.iloc[i + 1]["n"]
 
@@ -171,6 +175,7 @@ def calculate_electrical_field(
         field_position_arr.append(position_global)
         vec_arr.append(vec)
         n_field_arr.append(n)
+        layer_name_field_arr.append(layer_name)
 
         if n != n_next:
             T_n_next_n = transfer_matrix_interface(n_next, n)
@@ -189,6 +194,7 @@ def calculate_electrical_field(
     field_values_arr = np.array(field_values_arr)
     field_positions_arr = np.array(field_position_arr)
     n_field_arr = np.array(n_field_arr)
+    layer_name_field_arr = np.array(layer_name_field_arr)
     field_properties_results = FieldProperties(
         structure_interpolated=structure_interpolated,
         field_positions_arr=field_positions_arr,
@@ -196,6 +202,7 @@ def calculate_electrical_field(
         field_values_forward_arr=field_values_forward_arr,
         field_values_backward_arr=field_values_backward_arr,
         n_field_arr=n_field_arr,
+        layer_name_field_arr=layer_name_field_arr,
         Gamma_z=0.0,
         Gamma_z_active_region=0.0,
         alpha_i=0.0,

@@ -139,6 +139,27 @@ def R_theoretical(N, n1, n2, ns, n0):
         b = n1**2 * (n1 / n2) ** (2 * int(N)) + n0 * ns
     return (a / b) ** 2
 
+# def R_theoretical(N, n1, n2, ns, n0):
+#     """
+
+#     Born eq. 96 and 99
+#     Only valid for larger N
+
+#     """
+#     n3 = n2
+#     n2 = n1
+#     n1 = ns
+#     nl = n0
+
+#     if N == int(N):
+#         a = 1-(nl/n1)*(n2/n3)**(2*N)
+#         b = 1+(nl/n1)*(n2/n3)**(2*N)
+
+#     else:
+#         a = 1-(n2/n1)*(n2/nl)*(n2/n3)**(2*N)
+#         b = 1+(n2/n1)*(n2/nl)*(n2/n3)**(2*N)
+#     return (a / b) ** 2
+
 
 def DBR_stopband_width():
     """

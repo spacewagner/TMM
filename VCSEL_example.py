@@ -4,6 +4,7 @@
 TODO
 
 mark effective cavity length in plot
+mark area in plot_structure that cotain keywords "cavity, modelled_region, embedding"
 print report to txt or table
 Use TMM to compare devices e.g. mode confinement over cavity length, DBR Pairs....
 expand lifetime analysis to predict dynamic properties
@@ -28,6 +29,7 @@ from TMM.structure_builder import (
     apply_etch,
     interpolate_structure,
     build_active_region,
+    VCSEL_embedding_active_region
 )
 from TMM.field_solver import (
     calculate_optical_properties,
@@ -44,7 +46,6 @@ from TMM.analysis import (
     analyse_VCSELs_DBRs,
     analyse_electrical_field,
     analyse_VCSEL_lifetime_tuning,
-    VCSEL_embedding_active_region,
 )
 
 from TMM.optimizations import optimize_embedding_thickness
@@ -250,14 +251,20 @@ VCSEL_cavity_tuning_properties = analyse_VCSEL_lifetime_tuning(
 )
 
 # %% Define active region
-n_quantum_wells = [3.53, 3.49] * 24
-d_quantum_wells = [0.8e-9, 0.2e-9] * 24
+n_quantum_wells = [3.49, 3.53] * 24
+d_quantum_wells = [2e-9, 0.8e-9] * 24
+n_quantum_wells.append(3.49)
+d_quantum_wells.append(2e-9)
 
-n_arr = [3.53, 3.49, 3.24, 3.49, *n_quantum_wells, 3.49, 3.205, 3.53, 3.205]
-d_arr = [30e-9, 15e-9, 35e-9, 4e-9, *d_quantum_wells, 4e-9, 50e-9, 10e-9, 21e-9]
+n_arr = [3.49, *n_quantum_wells, 3.49]
+d_arr = [4e-9, *d_quantum_wells, 4e-9]
+active_region_idx = [2 + 2 * i for i in range(int(len(n_quantum_wells) / 2))]
 
-active_region = build_active_region(n_arr, d_arr)
+active_region = build_active_region(n_arr, d_arr, active_region_idx=active_region_idx)
+d_active_region = active_region["d"].sum()
 plot_structure(active_region)
+plt.axvline(x=d_active_region / 2 * 1e6, color="red", linestyle="--")
+plt.show()
 # %% Find cavity length for optimum confinement
 results = optimize_embedding_thickness(
     VCSEL,
@@ -275,3 +282,5 @@ VCSEL_modified = VCSEL_embedding_active_region(
 results_electrical_field = calculate_electrical_field(
     VCSEL_modified, target_wavelength, Plot=True
 )
+
+# %%

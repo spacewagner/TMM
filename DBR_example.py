@@ -173,6 +173,9 @@ plt.ylim(0.97, 1.0)
 Compare etching properties from TMM with analytical solution
 
 """
+DBR = build_DBR_structure(
+    n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
+)
 DBR_etching_properties = analyse_etching(DBR, target_wavelength, N=N)
 
 plt.plot(DBR_etching_properties.d_arr, DBR_etching_properties.R_arr)
