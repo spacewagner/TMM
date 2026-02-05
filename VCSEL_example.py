@@ -15,6 +15,7 @@ define analysis methods as classes. More complex methods should inherit attribut
 
 """
 
+from matplotlib.pylab import norm
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -29,8 +30,10 @@ from TMM.structure_builder import (
     apply_etch,
     interpolate_structure,
     build_active_region,
-    VCSEL_embedding_active_region
+    VCSEL_embedding_active_region,
+    flip_structure,
 )
+
 from TMM.field_solver import (
     calculate_optical_properties,
     calculate_electrical_field,
@@ -50,7 +53,11 @@ from TMM.analysis import (
 
 from TMM.optimizations import optimize_embedding_thickness
 
-from TMM.optics_utils import refractive_index_AlGaAs_at_1310, refractive_index_SiO2
+from TMM.optics_utils import (
+    refractive_index_AlGaAs_at_1310,
+    refractive_index_SiO2,
+    refractive_index_Si3N4,
+)
 
 # %%
 """
@@ -86,6 +93,7 @@ VCSEL = build_VCSEL_structure(
 )
 
 plot_structure(VCSEL)
+plt.show()
 
 # %% Full Analysis
 
@@ -126,6 +134,7 @@ VCSEL_field_properties_results = analyse_electrical_field(VCSEL, target_waveleng
 Recover the structures parameters.
 """
 
+VCSEL_structure = get_VCSEL_structure(VCSEL)
 (
     n_bottom_1,
     n_bottom_2,
@@ -136,7 +145,7 @@ Recover the structures parameters.
     n_cavity,
     n_substrate,
     n_air,
-) = get_VCSEL_structure(VCSEL)
+) = VCSEL_structure.structure_arr
 
 
 # %%
@@ -155,10 +164,14 @@ plt.show()
 DBR_top = build_DBR_structure(
     n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
 )
+
+# if VCSEL was coated, the coating has to be recovered separately
+if VCSEL_structure.coating_arr is not None:
+    DBR_top = apply_AR_coating(DBR_top, *VCSEL_structure.coating_arr)
+
+DBR_top = flip_structure(DBR_top)
 plot_structure(DBR_top)
 plt.show()
-
-
 # %% analyse DBRs
 
 """
@@ -209,6 +222,7 @@ Investigate the effect of etching on reflectivity.
 """
 
 VCSEL_etching_properties = analyse_etching(VCSEL, target_wavelength)
+VCSEL_etching_properties.n_arr
 
 """
 Apply an AR coating.
@@ -225,6 +239,27 @@ Investigate the effect of AR coating on reflectivity.
 
 """
 VCSEL_coating_properties = analyse_AR_coating(VCSEL, target_wavelength)
+
+# %%
+"""
+Or directly both
+
+"""
+
+structure_etching_properties, structure_coating_properties = (
+    analyse_reflectivity_tuning(VCSEL, target_wavelength)
+)
+
+# %% Evaluate effect of graded coating
+
+n_arr = np.linspace(AlAs, 2, 10)
+VCSEL_coated = VCSEL
+for n in n_arr:
+    VCSEL_coated = apply_AR_coating(VCSEL_coated, n, target_wavelength / (2 * n))
+
+structure_etching_properties, structure_coating_properties = (
+    analyse_reflectivity_tuning(VCSEL_coated, target_wavelength)
+)
 
 # %% Temperature tuning
 
@@ -271,7 +306,7 @@ results = optimize_embedding_thickness(
     active_region,
     target_wavelength=target_wavelength,
     d_min=0e-9,
-    d_max=500e-9,
+    d_max=600e-9,
 )
 
 # %% Build VCSEL with active region, with optimum cavity length

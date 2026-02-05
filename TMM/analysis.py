@@ -21,6 +21,7 @@ analyse_VCSEL_lifetime_tuning: analyse Top DBR reflectivity tuning by etch and c
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 from matplotlib import colormaps
 import time
 from scipy import constants as const
@@ -135,14 +136,17 @@ def analyse_electrical_field(
             if integral_full_real != 0
             else 0.0
         )
-        
+
     Gamma_z_active_region = 0.0
     if not idx_active_region.empty:
         idx_active_region = idx_active_region.values
 
         # here, taking the gradient is not suficient, since in case of segment wise integration (e.g. for quantum well active region), the jump in the position array will affect the gradient. The layer thickness d of the filtered structure_interpolated dataframe is sufficient and matches the index of the field_values_arr
         integral_active_region = np.sum(
-            np.abs(structure_field_properties_results.field_values_arr[idx_active_region]) ** 2
+            np.abs(
+                structure_field_properties_results.field_values_arr[idx_active_region]
+            )
+            ** 2
             * structure_interpolated.iloc[idx_active_region]["d"]
         )
         Gamma_z_active_region = (
@@ -173,6 +177,7 @@ class TuningProperties:
     R_tuning_range: float
     n_coating: float
     N_arr: np.ndarray
+    n_arr: np.ndarray
 
 
 def analyse_AR_coating(
@@ -189,8 +194,9 @@ def analyse_AR_coating(
 
     R_tuning_range = max(R_arr) - min(R_arr)
     R_arr = np.array(R_arr)
+    n_arr = np.array([n_coating] * len(R_arr))
     structure_coating_properties = TuningProperties(
-        d_coating_arr, R_arr, R_tuning_range, n_coating, N_arr=np.array([])
+        d_coating_arr, R_arr, R_tuning_range, n_coating, N_arr=np.array([]), n_arr=n_arr
     )
 
     if Plot:
@@ -203,13 +209,47 @@ def analyse_AR_coating(
 
 def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=True):
 
+    # in case of uncoated DBR structure
     d1 = structure.iloc[-2]["d"]
     d2 = structure.iloc[-3]["d"]
-    d_etch_max = N * (d1 + d2)
-    d_etch_arr = np.arange(0, d_etch_max + 1e-12, resolution)
+
+    n1 = structure.iloc[-2]["n"]
+    n2 = structure.iloc[-3]["n"]
+
+    # in case of uncoated VCSEL structure
+    cavity = structure.loc[(structure["name"] == "Cavity")]
+    if cavity.empty == False:
+        idx_cavity = cavity.index[0]
+        DBR_bottom = structure.iloc[1:idx_cavity]
+        DBR_top = structure.iloc[idx_cavity + 1 : -1]
+        DBR_top_filtered = DBR_top.loc[
+            (DBR_top["name"] == "DBR_1") | (DBR_top["name"] == "DBR_2")
+        ]
+
+        d1 = DBR_top_filtered.iloc[-1]["d"]
+        d2 = DBR_top_filtered.iloc[-2]["d"]
+        n1 = DBR_top_filtered.iloc[-1]["n"]
+        n2 = DBR_top_filtered.iloc[-2]["n"]
+
+    # coating
+    coating = structure[structure["name"] == "Coating"]
 
     d_arr = []
+    n_arr = []
     start_pos = 0
+
+    # coating
+    for i in range(len(coating)):
+        d_coating_layer = coating.iloc[-(i + 1)]["d"]
+        d_arr_loc = np.arange(start_pos, start_pos + d_coating_layer + 1e-12, 1e-9)
+        d_arr.append(d_arr_loc)
+        start_pos += d_coating_layer
+
+        n_coating_layer = coating.iloc[-(i + 1)]["n"]
+        n_arr_loc = [n_coating_layer] * len(d_arr_loc)
+        n_arr.append(n_arr_loc)
+
+    # DBR
     N_arr = []
     N_pos = N
     for i in range(int(N)):
@@ -218,19 +258,27 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=T
         N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
         start_pos += d1
         N_pos -= 0.5
+        n_arr_loc = [n1] * len(d_arr_loc)
+        n_arr.append(n_arr_loc)
 
         d_arr_loc = np.arange(start_pos, start_pos + d2 + 1e-12, 1e-9)
         d_arr.append(d_arr_loc)
         N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
         start_pos += d2
         N_pos -= 0.5
+        n_arr_loc = [n2] * len(d_arr_loc)
+        n_arr.append(n_arr_loc)
+
     if int(N) != N:
         d_arr_loc = np.arange(start_pos, start_pos + d1 + 1e-12, 1e-9)
         d_arr.append(d_arr_loc)
         N_arr.append(np.linspace(N_pos, N_pos - 0.5, len(d_arr_loc)))
+        n_arr_loc = [n1] * len(d_arr_loc)
+        n_arr.append(n_arr_loc)
 
     d_etch_arr = np.concatenate(d_arr)
     N_arr = np.concatenate(N_arr)
+    n_arr = np.concatenate(n_arr)
 
     R_arr = []
     for d_etch in d_etch_arr:
@@ -238,16 +286,35 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=T
         M = transfer_matrix(structure_etch, target_wavelength)
         R_arr.append(calculate_reflectivity(M))
 
+    # TODO calculate tuning range in each layer
     top_layer_d = structure.iloc[-2]["d"]
     top_layer_d_idx = np.argmin(abs(d_etch_arr - top_layer_d))
     R_tuning_range = abs(R_arr[top_layer_d_idx] - R_arr[0])
+
     R_arr = np.array(R_arr)
     structure_etch_properties = TuningProperties(
-        d_etch_arr, R_arr, R_tuning_range, n_coating=0.0, N_arr=N_arr
+        d_etch_arr, R_arr, R_tuning_range, n_coating=0.0, N_arr=N_arr, n_arr=n_arr
     )
 
     if Plot:
         plt.plot(d_etch_arr * 1e9, R_arr)
+
+        norm = Normalize(vmin=1, vmax=n_arr.max())
+        C = np.vstack([n_arr, n_arr])
+        X, Y = np.meshgrid(d_etch_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+        pcm = plt.pcolormesh(
+            X,
+            Y,
+            C,
+            shading="auto",
+            cmap="viridis_r",
+            norm=norm,
+            alpha=0.3,
+            rasterized=True,
+        )
+        plt.colorbar(label="Refractive Index")
+        plt.ylim(np.min(R_arr), 1)
+
         plt.xlabel("Etch Depth (nm)")
         plt.ylabel("Reflectivity")
 
@@ -511,63 +578,108 @@ def analyse_reflectivity_tuning(
 
     if Plot:
 
-        DBR_d1 = structure.iloc[-2]["d"]
-        DBR_d2 = structure.iloc[-3]["d"]
-        DBR_n1 = structure.iloc[-2]["n"]
-        DBR_n2 = structure.iloc[-3]["n"]
+        # index_cavity = list(structure.loc[(structure["name"] == "Cavity")].index)[0]
+        # DBR_top = structure.iloc[index_cavity + 1 : -1]
 
-        plt.plot(
-            -1 * structure_etching_properties.d_arr * 1e9,
-            structure_etching_properties.R_arr,
+        # DBR_n1 = DBR_top.iloc[0]["n"]
+        # DBR_n2 = DBR_top.iloc[1]["n"]
+        # DBR_d1 = DBR_top.iloc[0]["d"]
+        # DBR_d2 = DBR_top.iloc[1]["d"]
+
+        d_arr = np.concatenate(
+            [
+                np.flip(-1 * structure_etching_properties.d_arr),
+                structure_coating_properties.d_arr,
+            ]
         )
-        plt.plot(
-            structure_coating_properties.d_arr * 1e9,
-            structure_coating_properties.R_arr,
-            color="tab:blue",
+
+        R_arr = np.concatenate(
+            [
+                np.flip(structure_etching_properties.R_arr),
+                structure_coating_properties.R_arr,
+            ]
         )
+
+        n_arr = np.concatenate(
+            [
+                np.flip(structure_etching_properties.n_arr),
+                structure_coating_properties.n_arr,
+            ]
+        )
+
+        plt.plot(d_arr * 1e9, R_arr)
+
+        # refractive index as color map
+        # X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+        # C = np.vstack([n_arr, n_arr])
+        # plt.pcolormesh(X, Y, C, shading="auto", cmap="viridis_r", alpha=0.4,rasterized=True,)
+        # plt.colorbar(label="Refractive Index")
+
+        # norm = Normalize(vmin=n_arr.min(), vmax=n_arr.max())
+        norm = Normalize(vmin=1, vmax=n_arr.max())
+        C = np.vstack([n_arr, n_arr])
+
+        # ax1
+        X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+        pcm = plt.pcolormesh(
+            X, Y, C, shading="auto", cmap="viridis_r", norm=norm, alpha=0.3,
+            rasterized=True,
+        )
+        plt.colorbar(label="Refractive Index")
+        plt.ylim(np.min(R_arr), 1)
+
+        # plt.plot(
+        #     -1 * structure_etching_properties.d_arr * 1e9,
+        #     structure_etching_properties.R_arr,
+        # )
+        # plt.plot(
+        #     structure_coating_properties.d_arr * 1e9,
+        #     structure_coating_properties.R_arr,
+        #     color="tab:blue",
+        # )
 
         plt.axvline(0, color="tab:red")
 
-        plt.axvspan(
-            structure_coating_properties.d_arr[0] * 1e9,
-            structure_coating_properties.d_arr[-1] * 1e9,
-            alpha=0.2,
-            color="tab:green",
-            label=n_coating,
-        )
+        # plt.axvspan(
+        #     structure_coating_properties.d_arr[0] * 1e9,
+        #     structure_coating_properties.d_arr[-1] * 1e9,
+        #     alpha=0.2,
+        #     color="tab:green",
+        #     label=n_coating,
+        # )
 
-        start_position = structure_etching_properties.d_arr[0]
-        label = None
-        for i in range(2):
+        # start_position = structure_etching_properties.d_arr[0]
+        # label = None
+        # for i in range(2):
 
-            end_position = start_position + DBR_d1
-            if i == 1:
-                label = DBR_n1
-            plt.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:blue",
-                label=label,
-            )
-            start_position = end_position
-            end_position = start_position + DBR_d2
-            if i == 1:
-                label = DBR_n2
-            plt.axvspan(
-                -1 * start_position * 1e9,
-                -1 * end_position * 1e9,
-                alpha=0.2,
-                color="tab:orange",
-                label=label,
-            )
-            start_position = end_position
+        #     end_position = start_position + DBR_d1
+        #     if i == 1:
+        #         label = DBR_n1
+        #     plt.axvspan(
+        #         -1 * start_position * 1e9,
+        #         -1 * end_position * 1e9,
+        #         alpha=0.2,
+        #         color="tab:blue",
+        #         label=label,
+        #     )
+        #     start_position = end_position
+        #     end_position = start_position + DBR_d2
+        #     if i == 1:
+        #         label = DBR_n2
+        #     plt.axvspan(
+        #         -1 * start_position * 1e9,
+        #         -1 * end_position * 1e9,
+        #         alpha=0.2,
+        #         color="tab:orange",
+        #         label=label,
+        #     )
+        #     start_position = end_position
 
-        plt.autoscale(enable=True, axis="x", tight=True)
-        plt.autoscale(enable=True, axis="y", tight=True)
+        plt.margins(x=0, y=0)
+        plt.ylim(min(R_arr), max(R_arr))
         plt.xlabel("Thickness (nm)")
         plt.ylabel("Reflectivity")
-        plt.legend()
+        # plt.legend()
 
     if Print:
 
@@ -758,25 +870,28 @@ def analyse_VCSELs_DBRs(
     VCSEL_real = VCSEL.copy()
     VCSEL_real["n"] = np.real(VCSEL_real["n"])  # only take real part of n
 
-    (
-        n_bottom_1,
-        n_bottom_2,
-        N_bottom,
-        n_top_1,
-        n_top_2,
-        N_top,
-        n_cavity,
-        n_substrate,
-        n_air,
-    ) = get_VCSEL_structure(VCSEL_real)
+    VCSEL_structure = get_VCSEL_structure(VCSEL_real)
 
     DBR_bottom = build_DBR_structure(
-        n_bottom_1, n_bottom_2, N_bottom, target_wavelength, n_substrate, n_cavity
+        VCSEL_structure.n_bottom_1,
+        VCSEL_structure.n_bottom_2,
+        VCSEL_structure.N_bottom,
+        target_wavelength,
+        VCSEL_structure.n_substrate,
+        VCSEL_structure.n_cavity,
     )
 
     DBR_top = build_DBR_structure(
-        n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
+        VCSEL_structure.n_top_1,
+        VCSEL_structure.n_top_2,
+        VCSEL_structure.N_top,
+        target_wavelength,
+        VCSEL_structure.n_cavity,
+        VCSEL_structure.n_air,
     )
+
+    if VCSEL_structure.coating_arr is not None:
+        DBR_top = apply_AR_coating(DBR_top, *VCSEL_structure.coating_arr)
 
     # Top DBR needs to be flipped, since incident wave is coming from bottom side, not top side
     DBR_top = flip_structure(DBR_top)
@@ -896,17 +1011,23 @@ def analyse_VCSELs_DBRs(
         ax2 = plt.subplot(2, 2, 2)
 
         ax2.plot(
-            DBR_Top_properties.field_positions_arr * 1e6,
-            np.flip(np.real(DBR_Top_properties.n_field_arr)),
+            (
+                DBR_Top_properties.field_positions_arr
+                - np.max(DBR_Top_properties.field_positions_arr)
+            )
+            * -1e6,
+            np.real(DBR_Top_properties.n_field_arr),
             label="n(z)",
         )
         ax2.plot(
-            DBR_Top_properties.field_positions_arr * 1e6,
-            np.flip(
-                abs(DBR_Top_properties.field_values_arr) ** 2
-                / np.max(abs(DBR_Top_properties.field_values_arr) ** 2)
-                * np.max(DBR_Top_properties.n_field_arr)
-            ),
+            (
+                DBR_Top_properties.field_positions_arr
+                - np.max(DBR_Top_properties.field_positions_arr)
+            )
+            * -1e6,
+            abs(DBR_Top_properties.field_values_arr) ** 2
+            / np.max(abs(DBR_Top_properties.field_values_arr) ** 2)
+            * np.max(DBR_Top_properties.n_field_arr),
             color="tab:red",
             label="$norm. |E|^2$",
         )
@@ -1071,10 +1192,12 @@ class VCSEL_Properties:
     R_coating_arr: np.ndarray
     R_tuning_range_coating: float
     n_coating: float
+    n_coating_arr: np.ndarray
 
     d_etching_arr: np.ndarray
     R_etching_arr: np.ndarray
     R_tuning_range_etching: float
+    n_etching_arr: np.ndarray
 
     # Temperature Tuning
     temperature_arr: np.ndarray
@@ -1093,6 +1216,7 @@ def analyse_VCSEL(
     n_coating=1.45,
     fine_range=1e-9,
     mesh_size=0.001e-9,
+    Plot=True,
     plot_details=False,
     print_details=True,
     Save_to="pdf",
@@ -1123,7 +1247,7 @@ def analyse_VCSEL(
     )
 
     VCSELs_DBR_properties = analyse_VCSELs_DBRs(
-        VCSEL, target_wavelength, wavelength_arr, Plot=False
+        VCSEL, target_wavelength, wavelength_arr, Plot=plot_details
     )
 
     # VCSEL_coating_properties, VCSEL_etching_properties = analyse_reflectivity_tuning(
@@ -1134,37 +1258,41 @@ def analyse_VCSEL(
     #     Print=print_details,
     # )
 
-    (
-        n_bottom_1,
-        n_bottom_2,
-        N_bottom,
-        n_top_1,
-        n_top_2,
-        N_top,
-        n_cavity,
-        n_substrate,
-        n_air,
-    ) = get_VCSEL_structure(VCSEL)
+    VCSEL_structure = get_VCSEL_structure(VCSEL)
 
     DBR_bottom = build_DBR_structure(
-        n_bottom_1, n_bottom_2, N_bottom, target_wavelength, n_substrate, n_cavity
+        VCSEL_structure.n_bottom_1,
+        VCSEL_structure.n_bottom_2,
+        VCSEL_structure.N_bottom,
+        target_wavelength,
+        VCSEL_structure.n_substrate,
+        VCSEL_structure.n_cavity,
     )
 
     DBR_top = build_DBR_structure(
-        n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
+        VCSEL_structure.n_top_1,
+        VCSEL_structure.n_top_2,
+        VCSEL_structure.N_top,
+        target_wavelength,
+        VCSEL_structure.n_cavity,
+        VCSEL_structure.n_air,
     )
 
     # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
-    DBR_top_coating_properties = analyse_AR_coating(
-        DBR_top,
-        target_wavelength,
-        n_coating=n_coating,
-        resolution=1e-9,
-        Plot=False,
-    )
-    plt.show()
-    DBR_top_etching_properties = analyse_etching(
-        DBR_top, target_wavelength, resolution=1e-9, Plot=False
+    # DBR_top_coating_properties = analyse_AR_coating(
+    #     DBR_top,
+    #     target_wavelength,
+    #     n_coating=n_coating,
+    #     resolution=1e-9,
+    #     Plot=False,
+    # )
+    # plt.show()
+    # DBR_top_etching_properties = analyse_etching(
+    #     DBR_top, target_wavelength, resolution=1e-9, Plot=False
+    # )
+
+    DBR_top_etching_properties, DBR_top_coating_properties = (
+        analyse_reflectivity_tuning(VCSEL, target_wavelength, Plot=plot_details)
     )
 
     VCSEL_field_properties_results = analyse_electrical_field(
@@ -1239,6 +1367,8 @@ def analyse_VCSEL(
         d_etching_arr=DBR_top_etching_properties.d_arr,
         R_etching_arr=DBR_top_etching_properties.R_arr,
         R_tuning_range_etching=DBR_top_etching_properties.R_tuning_range,
+        n_etching_arr=DBR_top_etching_properties.n_arr,
+        n_coating_arr=DBR_top_coating_properties.n_arr,
         temperature_arr=T_arr,
         temperature_coefficent=VCSEL_temperature_properties.temperature_coefficent,
         wavelength_T_theory_arr=VCSEL_temperature_properties.wavelength_T_theory_arr,
@@ -1249,8 +1379,8 @@ def analyse_VCSEL(
     )
 
     # plotting
-
-    plot_analyse_VCSEL(results, Save_to="pdf")
+    if Plot:
+        plot_analyse_VCSEL(results, Save_to="pdf")
 
     return results
 
@@ -1267,6 +1397,7 @@ class CavityTuningProperties:
     R_coating_arr: np.ndarray
     R_tuning_range_coating: float
     n_coating: float
+    n_coating_arr: np.ndarray
     L_eff_coating_arr: np.ndarray
     n_cavity_eff_coating_arr: np.ndarray
     v_gr_coating_arr: np.ndarray
@@ -1278,6 +1409,7 @@ class CavityTuningProperties:
 
     d_etching_arr: np.ndarray
     R_etching_arr: np.ndarray
+    n_etching_arr: np.ndarray
     R_tuning_range_etching: float
     L_eff_etch_arr: np.ndarray
     n_cavity_eff_etch_arr: np.ndarray
@@ -1335,24 +1467,24 @@ def analyse_VCSEL_lifetime_tuning(
         VCSEL_modified, target_wavelength, Plot=False, Print=False
     )
 
-    (
-        n_bottom_1,
-        n_bottom_2,
-        N_bottom,
-        n_top_1,
-        n_top_2,
-        N_top,
-        n_cavity,
-        n_substrate,
-        n_air,
-    ) = get_VCSEL_structure(VCSEL)
+    VCSEL_structure = get_VCSEL_structure(VCSEL)
 
     DBR_bottom = build_DBR_structure(
-        n_bottom_1, n_bottom_2, N_bottom, target_wavelength, n_substrate, n_cavity
+        VCSEL_structure.n_bottom_1,
+        VCSEL_structure.n_bottom_2,
+        VCSEL_structure.N_bottom,
+        target_wavelength,
+        VCSEL_structure.n_substrate,
+        VCSEL_structure.n_cavity,
     )
 
     DBR_top = build_DBR_structure(
-        n_top_1, n_top_2, N_top, target_wavelength, n_cavity, n_air
+        VCSEL_structure.n_top_1,
+        VCSEL_structure.n_top_2,
+        VCSEL_structure.N_top,
+        target_wavelength,
+        VCSEL_structure.n_cavity,
+        VCSEL_structure.n_air,
     )
 
     # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
@@ -1551,6 +1683,7 @@ def analyse_VCSEL_lifetime_tuning(
         R_coating_arr=DBR_top_coating_properties.R_arr,
         R_tuning_range_coating=DBR_top_coating_properties.R_tuning_range,
         n_coating=n_coating,
+        n_coating_arr=DBR_top_coating_properties.n_arr,
         L_eff_coating_arr=L_eff_coating_arr,
         n_cavity_eff_coating_arr=n_cavity_eff_coating_arr,
         v_gr_coating_arr=v_gr_coating_arr,
@@ -1561,6 +1694,7 @@ def analyse_VCSEL_lifetime_tuning(
         g_threshold_coating_arr_arr=g_threshold_coating_arr_arr,
         d_etching_arr=DBR_top_etching_properties.d_arr,
         R_etching_arr=DBR_top_etching_properties.R_arr,
+        n_etching_arr=DBR_top_etching_properties.n_arr,
         R_tuning_range_etching=DBR_top_etching_properties.R_tuning_range,
         L_eff_etch_arr=L_eff_etch_arr,
         n_cavity_eff_etch_arr=n_cavity_eff_etch_arr,

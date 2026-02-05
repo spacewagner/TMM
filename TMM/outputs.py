@@ -7,9 +7,11 @@ This module contains functions for plotting and printing results from analysis.p
 """
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 import time
 import numpy as np
 from TMM.structure_builder import interpolate_structure
+
 import matplotlib.cm as cm
 
 tab10 = cm.get_cmap("tab10")
@@ -24,77 +26,91 @@ def apply_plot_style():
 
 def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="pdf"):
 
-    VCSEL = VCSEL_cavity_tuning_properties.structure
-    DBR_d1 = VCSEL.iloc[-2]["d"]
-    DBR_d2 = VCSEL.iloc[-3]["d"]
-    DBR_n1 = VCSEL.iloc[-2]["n"]
-    DBR_n2 = VCSEL.iloc[-3]["n"]
+    # VCSEL = VCSEL_cavity_tuning_properties.structure
+    # DBR_d1 = VCSEL.iloc[-2]["d"]
+    # DBR_d2 = VCSEL.iloc[-3]["d"]
+    # DBR_n1 = VCSEL.iloc[-2]["n"]
+    # DBR_n2 = VCSEL.iloc[-3]["n"]
+
+    d_arr = np.concatenate(
+        [
+            np.flip(-1 * VCSEL_cavity_tuning_properties.d_etching_arr),
+            VCSEL_cavity_tuning_properties.d_coating_arr,
+        ]
+    )
+
+    R_arr = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.R_etching_arr),
+            VCSEL_cavity_tuning_properties.R_coating_arr,
+        ]
+    )
+
+    n_arr = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.n_etching_arr),
+            VCSEL_cavity_tuning_properties.n_coating_arr,
+        ]
+    )
 
     fig = plt.figure(figsize=(11, 8))
 
     ax1 = plt.subplot(2, 1, 1)  # Span column 1 of row 1
 
-    ax1.plot(
-        -1 * VCSEL_cavity_tuning_properties.d_etching_arr * 1e9,
-        VCSEL_cavity_tuning_properties.R_etching_arr,
-        color="black",
-    )
-    ax1.plot(
-        VCSEL_cavity_tuning_properties.d_coating_arr * 1e9,
-        VCSEL_cavity_tuning_properties.R_coating_arr,
-        color="black",
-    )
+    ax1.plot(d_arr * 1e9, R_arr, color="black")
     ax1.axvline(0, color="tab:red")
 
-    ax1.axvspan(
-        VCSEL_cavity_tuning_properties.d_coating_arr[0] * 1e9,
-        VCSEL_cavity_tuning_properties.d_coating_arr[-1] * 1e9,
-        alpha=0.2,
-        color="tab:green",
-        label=f"{VCSEL_cavity_tuning_properties.n_coating:.2f}",
-    )
+    # coating highlighting (only for single coating layer)
+    # ax1.axvspan(
+    #     VCSEL_cavity_tuning_properties.d_coating_arr[0] * 1e9,
+    #     VCSEL_cavity_tuning_properties.d_coating_arr[-1] * 1e9,
+    #     alpha=0.2,
+    #     color="tab:green",
+    #     label=f"{VCSEL_cavity_tuning_properties.n_coating:.2f}",
+    # )
 
-    start_position = VCSEL_cavity_tuning_properties.d_etching_arr[0]
-    label = None
-    for i in range(2):
+    # DBR highlighting (if preferred over colormap)
+    # start_position = VCSEL_cavity_tuning_properties.d_etching_arr[0]
+    # label = None
+    # for i in range(2):
 
-        end_position = start_position + DBR_d1
-        if i == 1:
-            label = f"{DBR_n1:.2f}"
-        ax1.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:blue",
-            label=label,
-        )
-        start_position = end_position
-        end_position = start_position + DBR_d2
-        if i == 1:
-            label = f"{DBR_n2:.2f}"
-        ax1.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:orange",
-            label=label,
-        )
-        start_position = end_position
+    #     end_position = start_position + DBR_d1
+    #     if i == 1:
+    #         label = f"{DBR_n1:.2f}"
+    #     ax1.axvspan(
+    #         -1 * start_position * 1e9,
+    #         -1 * end_position * 1e9,
+    #         alpha=0.2,
+    #         color="tab:blue",
+    #         label=label,
+    #     )
+    #     start_position = end_position
+    #     end_position = start_position + DBR_d2
+    #     if i == 1:
+    #         label = f"{DBR_n2:.2f}"
+    #     ax1.axvspan(
+    #         -1 * start_position * 1e9,
+    #         -1 * end_position * 1e9,
+    #         alpha=0.2,
+    #         color="tab:orange",
+    #         label=label,
+    #     )
+    #     start_position = end_position
 
     ax2 = ax1.twinx()
 
     for i, alpha_i in enumerate(VCSEL_cavity_tuning_properties.alpha_i_arr):
-        ax2.plot(
-            -1 * VCSEL_cavity_tuning_properties.d_etching_arr * 1e9,
-            VCSEL_cavity_tuning_properties.photon_lifetime_etch_arr_arr[i] * 1e12,
-            linestyle="--",
-            label=f"$\\alpha_i$ = {alpha_i*1e-2:.1f}" " cm$^{-1}$",
-            color=tab10(i),
+        photon_lifetime_arr = np.concatenate(
+            [
+                np.flip(VCSEL_cavity_tuning_properties.photon_lifetime_etch_arr_arr[i]),
+                VCSEL_cavity_tuning_properties.photon_lifetime_coating_arr_arr[i],
+            ]
         )
         ax2.plot(
-            VCSEL_cavity_tuning_properties.d_coating_arr * 1e9,
-            VCSEL_cavity_tuning_properties.photon_lifetime_coating_arr_arr[i] * 1e12,
+            d_arr * 1e9,
+            photon_lifetime_arr * 1e12,
             linestyle="--",
+            label=f"$\\alpha_i$ = {alpha_i*1e-2:.1f}" " cm$^{-1}$",
             color=tab10(i),
         )
 
@@ -111,68 +127,77 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
     ax1.tick_params(axis="x", labelbottom=False)
 
     ax3 = plt.subplot(2, 1, 2)
-    ax3.plot(
-        -1 * VCSEL_cavity_tuning_properties.d_etching_arr * 1e9,
-        VCSEL_cavity_tuning_properties.alpha_m_etch_arr * 1e-2,
-        color="black",
+
+    alpha_m_arr = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.alpha_m_etch_arr),
+            VCSEL_cavity_tuning_properties.alpha_m_coating_arr,
+        ]
     )
-    ax3.plot(
-        VCSEL_cavity_tuning_properties.d_coating_arr * 1e9,
-        VCSEL_cavity_tuning_properties.alpha_m_coating_arr * 1e-2,
-        color="black",
-    )
+    ax3.plot(d_arr * 1e9, alpha_m_arr * 1e-2, color="black")
+
+    # ax3.plot(
+    #     -1 * VCSEL_cavity_tuning_properties.d_etching_arr * 1e9,
+    #     VCSEL_cavity_tuning_properties.alpha_m_etch_arr * 1e-2,
+    #     color="black",
+    # )
+    # ax3.plot(
+    #     VCSEL_cavity_tuning_properties.d_coating_arr * 1e9,
+    #     VCSEL_cavity_tuning_properties.alpha_m_coating_arr * 1e-2,
+    #     color="black",
+    # )
     ax3.axvline(0, color="tab:red")
 
-    ax3.axvspan(
-        VCSEL_cavity_tuning_properties.d_coating_arr[0] * 1e9,
-        VCSEL_cavity_tuning_properties.d_coating_arr[-1] * 1e9,
-        alpha=0.2,
-        color="tab:green",
-        label=f"{VCSEL_cavity_tuning_properties.n_coating:.2f}",
-    )
+    # ax3.axvspan(
+    #     VCSEL_cavity_tuning_properties.d_coating_arr[0] * 1e9,
+    #     VCSEL_cavity_tuning_properties.d_coating_arr[-1] * 1e9,
+    #     alpha=0.2,
+    #     color="tab:green",
+    #     label=f"{VCSEL_cavity_tuning_properties.n_coating:.2f}",
+    # )
 
-    start_position = VCSEL_cavity_tuning_properties.d_etching_arr[0]
-    label = None
-    for i in range(2):
+    # start_position = VCSEL_cavity_tuning_properties.d_etching_arr[0]
+    # label = None
+    # for i in range(2):
 
-        end_position = start_position + DBR_d1
-        if i == 1:
-            label = f"{DBR_n1:.2f}"
-        ax3.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:blue",
-            label=label,
-        )
-        start_position = end_position
-        end_position = start_position + DBR_d2
-        if i == 1:
-            label = f"{DBR_n2:.2f}"
-        ax3.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:orange",
-            label=label,
-        )
-        start_position = end_position
+    #     end_position = start_position + DBR_d1
+    #     if i == 1:
+    #         label = f"{DBR_n1:.2f}"
+    #     ax3.axvspan(
+    #         -1 * start_position * 1e9,
+    #         -1 * end_position * 1e9,
+    #         alpha=0.2,
+    #         color="tab:blue",
+    #         label=label,
+    #     )
+    #     start_position = end_position
+    #     end_position = start_position + DBR_d2
+    #     if i == 1:
+    #         label = f"{DBR_n2:.2f}"
+    #     ax3.axvspan(
+    #         -1 * start_position * 1e9,
+    #         -1 * end_position * 1e9,
+    #         alpha=0.2,
+    #         color="tab:orange",
+    #         label=label,
+    #     )
+    #     start_position = end_position
+
     ax4 = ax3.twinx()
     for i, alpha_i in enumerate(VCSEL_cavity_tuning_properties.alpha_i_arr):
+        g_threshold_arr = np.concatenate(
+            [
+                np.flip(VCSEL_cavity_tuning_properties.g_threshold_etch_arr_arr[i]),
+                VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[i],
+            ]
+        )
         ax4.plot(
-            -1 * VCSEL_cavity_tuning_properties.d_etching_arr * 1e9,
-            VCSEL_cavity_tuning_properties.g_threshold_etch_arr_arr[i] * 1e-2,
+            d_arr * 1e9,
+            g_threshold_arr * 1e-2,
             linestyle="--",
-            color=tab10(i),
             label=f"$\\alpha_i$ = {alpha_i*1e-2:.1f}" " cm$^{-1}$",
-        )
-        ax4.plot(
-            VCSEL_cavity_tuning_properties.d_coating_arr * 1e9,
-            VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[i] * 1e-2,
-            linestyle="--",
             color=tab10(i),
         )
-
     ax4.set_ylabel("$g_{th}~(cm^{-1})$")
 
     ax3.minorticks_on()
@@ -191,6 +216,49 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
     all_handles = handles3 + handles4
     all_labels = labels3 + labels4
     ax4.legend(all_handles, all_labels, loc="best", ncol=2)
+
+    # norm = Normalize(vmin=n_arr.min(), vmax=n_arr.max())
+    norm = Normalize(vmin=1, vmax=n_arr.max())
+    C = np.vstack([n_arr, n_arr])
+
+    # ax1
+    X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+    pcm = ax1.pcolormesh(
+        X,
+        Y,
+        C,
+        shading="auto",
+        cmap="viridis_r",
+        norm=norm,
+        alpha=0.3,
+        rasterized=True,
+    )
+    ax1.set_ylim(np.min(R_arr), 1)
+
+    # ax2
+    X, Y = np.meshgrid(
+        d_arr * 1e9, [np.min(alpha_m_arr * 1e-2), np.max(alpha_m_arr * 1e-2)]
+    )
+    pcm = ax3.pcolormesh(
+        X,
+        Y,
+        C,
+        shading="auto",
+        cmap="viridis_r",
+        norm=norm,
+        alpha=0.3,
+        rasterized=True,
+    )
+    ax3.set_ylim(0, np.max(alpha_m_arr * 1e-2))
+
+    # # --- create separate axes for horizontal colorbar above ax1 ---
+    # pos1 = ax1.get_position()  # get [left, bottom, width, height] of ax1
+    # cbar_height = 0.03  # height of colorbar
+    # cbar_pad = 0.075  # gap between ax1 and colorbar
+    # cax = fig.add_axes([pos1.x0, pos1.y1 + cbar_pad, pos1.width, cbar_height])
+    # # horizontal colorbar
+    # cbar = fig.colorbar(pcm, cax=cax, orientation="horizontal")
+    # cbar.set_label("Refractive Index")
 
     if Save_to != None:
         formatted_time = time.strftime("%Y%m%d_%H%M%S")
@@ -356,64 +424,61 @@ def plot_analyse_VCSEL(analyse_VCSEL_results, Save_to="pdf"):
     # Third row: two plots
     ax4 = plt.subplot(3, 2, 5)  # Row 3, Column 1
 
-    DBR_d1 = VCSEL.iloc[-2]["d"]
-    DBR_d2 = VCSEL.iloc[-3]["d"]
-    DBR_n1 = VCSEL.iloc[-2]["n"]
-    DBR_n2 = VCSEL.iloc[-3]["n"]
+    d_arr = np.concatenate(
+        [
+            np.flip(-1 * analyse_VCSEL_results.d_etching_arr),
+            analyse_VCSEL_results.d_coating_arr,
+        ]
+    )
 
-    ax4.plot(
-        -1 * analyse_VCSEL_results.d_etching_arr * 1e9,
-        analyse_VCSEL_results.R_etching_arr,
+    R_arr = np.concatenate(
+        [
+            np.flip(analyse_VCSEL_results.R_etching_arr),
+            analyse_VCSEL_results.R_coating_arr,
+        ]
     )
-    ax4.plot(
-        analyse_VCSEL_results.d_coating_arr * 1e9,
-        analyse_VCSEL_results.R_coating_arr,
-        color="tab:blue",
+
+    n_arr = np.concatenate(
+        [
+            np.flip(analyse_VCSEL_results.n_etching_arr),
+            analyse_VCSEL_results.n_coating_arr,
+        ]
     )
+
+    ax4.plot(d_arr * 1e9, R_arr)
+
+    # # refractive index as color map
+    # X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+    # C = np.vstack([n_arr, n_arr])
+    # ax4.pcolormesh(X, Y, C, shading="auto", cmap="viridis_r", alpha=0.3,rasterized=True,)
+    # plt.colorbar(label="Refractive Index")
 
     ax4.axvline(0, color="tab:red")
 
-    ax4.axvspan(
-        analyse_VCSEL_results.d_coating_arr[0] * 1e9,
-        analyse_VCSEL_results.d_coating_arr[-1] * 1e9,
-        alpha=0.2,
-        color="tab:green",
-        label=analyse_VCSEL_results.n_coating,
+    norm = Normalize(vmin=1, vmax=n_arr.max())
+    C = np.vstack([n_arr, n_arr])
+    X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+    pcm = ax4.pcolormesh(
+        X,
+        Y,
+        C,
+        shading="auto",
+        cmap="viridis_r",
+        norm=norm,
+        alpha=0.3,
+        rasterized=True,
     )
 
-    start_position = analyse_VCSEL_results.d_etching_arr[0]
-    label = None
-    for i in range(2):
-
-        end_position = start_position + DBR_d1
-        if i == 1:
-            label = DBR_n1
-        ax4.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:blue",
-            label=label,
-        )
-        start_position = end_position
-        end_position = start_position + DBR_d2
-        if i == 1:
-            label = DBR_n2
-        ax4.axvspan(
-            -1 * start_position * 1e9,
-            -1 * end_position * 1e9,
-            alpha=0.2,
-            color="tab:orange",
-            label=label,
-        )
-        start_position = end_position
+    # Add colorbar to specific axis
+    fig = ax4.figure  # Get the figure from the axis
+    cbar = fig.colorbar(pcm, ax=ax4, label="Refractive Index")
 
     ax4.minorticks_on()
     ax4.tick_params(direction="in", which="both", top=True, right=True)
     ax4.grid(which="major", linestyle="-", linewidth=0.4)
-    ax4.autoscale(enable=True, axis="x", tight=True)
-    ax4.autoscale(enable=True, axis="y", tight=True)
-    ax4.legend()
+    ax4.margins(x=0, y=0)
+    ax4.set_ylim(np.min(R_arr), 1)
+    # ax4.legend()
     ax4.set_xlabel("Thickness (nm)")
     ax4.set_ylabel("Top DBR Reflectivity")
 

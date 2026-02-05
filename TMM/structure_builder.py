@@ -9,6 +9,7 @@ Helpers to build and visualise VCSEL/DBR structures
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from dataclasses import dataclass
 
 
 def wavelength_arr_adaptive_mesh(min, max, target, fine_range=5e-9, mesh_size=0.1e-9):
@@ -264,6 +265,26 @@ def plot_structure(structure, show_cavity_color: bool = True):
     plt.legend()
 
 
+@dataclass
+class VCSELStructure:
+
+    structure_arr: np.ndarray
+    coating_arr: np.ndarray
+
+    n_bottom_1: float
+    n_bottom_2: float
+    N_bottom: float
+    n_top_1: float
+    n_top_2: float
+    N_top: float
+    n_cavity: float
+    n_substrate: float
+    n_air: float
+
+    n_coating: float
+    d_coating: float
+
+
 def get_VCSEL_structure(VCSEL):
 
     index_cavity = list(VCSEL.loc[(VCSEL["name"] == "Cavity")].index)[0]
@@ -271,8 +292,17 @@ def get_VCSEL_structure(VCSEL):
     DBR_bottom = VCSEL.iloc[1:index_cavity]
     DBR_top = VCSEL.iloc[index_cavity + 1 : -1]
 
-    N_bottom = len(DBR_bottom) / 2
-    N_top = len(DBR_top) / 2
+    N_bottom = (
+        len(
+            DBR_bottom[
+                (DBR_bottom["name"] == "DBR_1") | (DBR_bottom["name"] == "DBR_2")
+            ]
+        )
+        / 2
+    )
+    N_top = (
+        len(DBR_top[(DBR_top["name"] == "DBR_1") | (DBR_top["name"] == "DBR_2")]) / 2
+    )
 
     n_bottom_1 = DBR_bottom.iloc[0]["n"]
     n_bottom_2 = DBR_bottom.iloc[1]["n"]
@@ -284,7 +314,35 @@ def get_VCSEL_structure(VCSEL):
     n_substrate = VCSEL.iloc[0]["n"]
     n_air = VCSEL.iloc[-1]["n"]
 
-    return (
+    n_coating = 0.0
+    d_coating = 0.0
+
+    coating = DBR_top.loc[(DBR_top["name"] == "Coating")]
+    if len(coating) == 1:
+        n_coating = coating.iloc[0]["n"]
+        d_coating = coating.iloc[0]["d"]
+    if len(coating) > 1:
+        print("Too many coating layers on top DBR.")
+
+    structure_arr = np.array(
+        [
+            n_bottom_1,
+            n_bottom_2,
+            N_bottom,
+            n_top_1,
+            n_top_2,
+            N_top,
+            n_cavity,
+            n_substrate,
+            n_air,
+        ]
+    )
+
+    coating_arr = np.array([n_coating, d_coating])
+
+    VCSEL_Structure = VCSELStructure(
+        structure_arr,
+        coating_arr,
         n_bottom_1,
         n_bottom_2,
         N_bottom,
@@ -294,7 +352,11 @@ def get_VCSEL_structure(VCSEL):
         n_cavity,
         n_substrate,
         n_air,
+        n_coating,
+        d_coating,
     )
+
+    return VCSEL_Structure
 
 
 def cavity_wavelength_temperature_correction(
@@ -322,13 +384,24 @@ def cavity_wavelength_temperature_correction(
 def VCSEL_temperature_correction(
     VCSEL, target_wavelength, T, temperature_coefficent=0.061e-9
 ):
+    """
+    Docstring for VCSEL_temperature_correction
+
+    :param VCSEL: Description
+    :param target_wavelength: Description
+    :param T: Description
+    :param temperature_coefficent: Description
+
+    TODO Cavity N will be 1 for temperature correction, needs to be fixed
+    """
 
     VCSEL_structure = get_VCSEL_structure(VCSEL)
     wavelength_T = cavity_wavelength_temperature_correction(
         target_wavelength, T, temperature_coefficent
     )
 
-    VCSEL_T = build_VCSEL_structure(*VCSEL_structure, wavelength_T)
+    # this is mistakenly recognized as an error, because it fails to unpack structure.structure_arr
+    VCSEL_T = build_VCSEL_structure(*VCSEL_structure.structure_arr, wavelength_T)
 
     return VCSEL_T, wavelength_T
 

@@ -139,6 +139,7 @@ def R_theoretical(N, n1, n2, ns, n0):
         b = n1**2 * (n1 / n2) ** (2 * int(N)) + n0 * ns
     return (a / b) ** 2
 
+
 # def R_theoretical(N, n1, n2, ns, n0):
 #     """
 
@@ -252,4 +253,20 @@ def refractive_index_SiO2(wl):
     b = 0.4079426 * wl**2 / (wl**2 - 0.1162414**2)
     c = 0.8974794 * wl**2 / (wl**2 - 9.896161**2)
     n = np.sqrt(a + b + c + 1)
+    return n
+
+
+def refractive_index_Si3N4(wl):
+    """
+    Calculate refractive index of fused Si3N4 using Sellmeier equation.
+    wl: wavelength in meters -> to um for formula
+    Returns: refractive index n
+    https://refractiveindex.info/?shelf=main&book=Si3N4&page=Luke
+    """
+
+    wl *= 1e6
+
+    a = 3.0249 * wl**2 / (wl**2 - 0.1353406**2)
+    b = 40314 * wl**2 / (wl**2 - 1239.842**2)
+    n = np.sqrt(a + b + 1)
     return n
