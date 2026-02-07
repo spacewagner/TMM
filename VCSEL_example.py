@@ -13,6 +13,8 @@ use separat mesh for cavity analysis to save time
 
 define analysis methods as classes. More complex methods should inherit attributes from the simpler ones. classes should include plot and print methods
 
+Add ticks at the color bar for the refractive indices that are actually shown (reflectivity tuning)
+
 """
 
 from matplotlib.pylab import norm

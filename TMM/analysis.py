@@ -210,11 +210,13 @@ def analyse_AR_coating(
 def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=True):
 
     # in case of uncoated DBR structure
-    d1 = structure.iloc[-2]["d"]
-    d2 = structure.iloc[-3]["d"]
-
-    n1 = structure.iloc[-2]["n"]
-    n2 = structure.iloc[-3]["n"]
+    structure_filtered = structure.loc[
+        (structure["name"] == "DBR_1") | (structure["name"] == "DBR_2")
+    ]
+    d1 = structure_filtered.iloc[-1]["d"]
+    d2 = structure_filtered.iloc[-2]["d"]
+    n1 = structure_filtered.iloc[-1]["n"]
+    n2 = structure_filtered.iloc[-2]["n"]
 
     # in case of uncoated VCSEL structure
     cavity = structure.loc[(structure["name"] == "Cavity")]
@@ -622,7 +624,13 @@ def analyse_reflectivity_tuning(
         # ax1
         X, Y = np.meshgrid(d_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
         pcm = plt.pcolormesh(
-            X, Y, C, shading="auto", cmap="viridis_r", norm=norm, alpha=0.3,
+            X,
+            Y,
+            C,
+            shading="auto",
+            cmap="viridis_r",
+            norm=norm,
+            alpha=0.3,
             rasterized=True,
         )
         plt.colorbar(label="Refractive Index")
