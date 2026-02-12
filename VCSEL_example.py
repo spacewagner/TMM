@@ -149,7 +149,22 @@ VCSEL_structure = get_VCSEL_structure(VCSEL)
     n_air,
 ) = VCSEL_structure.structure_arr
 
-
+# works also to recover coatings and active region, but have to be applied seperately again
+VCSEL = build_VCSEL_structure(*VCSEL_structure.structure_arr, target_wavelength)
+plot_structure(VCSEL)
+plt.show()
+VCSEL = apply_AR_coating(VCSEL, *VCSEL_structure.coating_arr)
+plot_structure(VCSEL)
+plt.show()
+VCSEL = VCSEL_embedding_active_region(
+    VCSEL,
+    build_active_region(
+        VCSEL_structure.n_embedding_arr, VCSEL_structure.d_embedding_arr
+    ),
+    VCSEL_structure.d_embedding,
+)
+plot_structure(VCSEL)
+plt.show()
 # %%
 
 """
@@ -200,7 +215,7 @@ VCSEL_cavity_properties_result = analyse_cavity_dip(
 # %% Reflectivity tuning
 
 """
-Investigate reflectivity tuning on the VCSELs structure by adding an anti reflective coating on the top DBR or by etching it partially. Default material for AR Coating is SiO2 with n = 1.45.
+Investigate reflectivity tuning on the VCSELs structure by adding an anti reflective coating on the top DBR or by etching it partially. Default material for AR Coating is SiO2 with n = 1.45. But in reality, you should investigate influence of top DBR reflectivity only.
 
 """
 
@@ -248,7 +263,7 @@ Or directly both
 
 """
 
-structure_etching_properties, structure_coating_properties = (
+structure_coating_properties, structure_etching_properties = (
     analyse_reflectivity_tuning(VCSEL, target_wavelength)
 )
 

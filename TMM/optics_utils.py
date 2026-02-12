@@ -169,10 +169,24 @@ def DBR_stopband_width():
     """
 
 
+def n_effective(n_arr, d_arr, field_values_arr):
+    """
+    TODO Source
+    """
+
+    field_magnitude_arr = abs(field_values_arr) ** 2
+
+    n_eff = np.sum((n_arr * field_magnitude_arr * d_arr)) / np.sum(
+        (field_magnitude_arr * d_arr)
+    )
+
+    return n_eff
+
+
 def DBR_penetration_depth(n1, n2, R, target_wavelength):
     """
     Michalzik eq. 2.5
-    Valid only for incident from high-index material
+    Approximation for ideal DBRs, valid only for incident from high-index material!
     """
     delta_n = abs(n1 - n2)
     kappa = 2 * delta_n / target_wavelength
@@ -217,6 +231,17 @@ def VCSEL_threshold_gain(Gamma_z, alpha_m, alpha_i=5e2):
 
 def coextinction_to_loss(kappa):
     return (4 * np.pi / const.c) * kappa
+
+
+def n_effective_cavity(cavity, cavity_field_magnitude):
+    n_arr = cavity["n"].values
+    d_arr = cavity["d"].values
+
+    n_eff = np.sum((n_arr * cavity_field_magnitude * d_arr)) / np.sum(
+        (cavity_field_magnitude * d_arr)
+    )
+
+    return n_eff
 
 
 def refractive_index_AlGaAs_at_1310(x):

@@ -284,13 +284,42 @@ class VCSELStructure:
     n_coating: float
     d_coating: float
 
+    n_embedding_arr: np.ndarray
+    d_embedding_arr: np.ndarray
+    idx_active_region: np.ndarray
+    d_embedding: float
+
 
 def get_VCSEL_structure(VCSEL):
+    """
 
-    index_cavity = list(VCSEL.loc[(VCSEL["name"] == "Cavity")].index)[0]
+    TODO does not recover N cavity
 
-    DBR_bottom = VCSEL.iloc[1:index_cavity]
-    DBR_top = VCSEL.iloc[index_cavity + 1 : -1]
+    """
+
+    idx_cavity = VCSEL.loc[VCSEL["name"] == "Cavity"].index
+    idx_embedding = VCSEL.loc[VCSEL["name"] == "Embedding"].index
+
+    n_embedding_arr = []
+    d_embedding_arr = []
+    idx_active_region = []
+    d_embedding = 0.0
+
+    if not idx_embedding.empty:
+        idx_cavity = idx_embedding
+        active_region = VCSEL.iloc[
+            idx_embedding[0] : idx_embedding[-1] + 1
+        ].reset_index(drop=True)
+        n_embedding_arr = active_region["n"].values
+        d_embedding_arr = active_region["d"].values
+        idx_active_region = active_region[
+            active_region["name"].str.contains("Active_Region")
+        ].index
+
+        d_embedding = VCSEL.iloc[idx_embedding[0]]["d"] * 2
+
+    DBR_bottom = VCSEL.iloc[1 : idx_cavity[0]]
+    DBR_top = VCSEL.iloc[idx_cavity[-1] + 1 : -1]
 
     N_bottom = (
         len(
@@ -310,7 +339,7 @@ def get_VCSEL_structure(VCSEL):
     n_top_1 = DBR_top.iloc[0]["n"]
     n_top_2 = DBR_top.iloc[1]["n"]
 
-    n_cavity = VCSEL.iloc[index_cavity]["n"]
+    n_cavity = VCSEL.iloc[idx_cavity]["n"].values[0]
     n_substrate = VCSEL.iloc[0]["n"]
     n_air = VCSEL.iloc[-1]["n"]
 
@@ -354,6 +383,10 @@ def get_VCSEL_structure(VCSEL):
         n_air,
         n_coating,
         d_coating,
+        np.array(n_embedding_arr),
+        np.array(d_embedding_arr),
+        np.array(idx_active_region),
+        d_embedding,
     )
 
     return VCSEL_Structure
@@ -509,22 +542,30 @@ def structure_embedding(structure, n_embedding, d_embedding, offset=0.0):
 
 def VCSEL_embedding_active_region(VCSEL, active_region, d_embedding=0.0, offset=0.0):
 
-    index_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")].index.values[0]
-    n_cavity = VCSEL.at[index_cavity, "n"]
+    VCSEL_modified = VCSEL.copy()
 
-    cavity_with_active_region = structure_embedding(
-        active_region, n_embedding=n_cavity, d_embedding=d_embedding / 2, offset=offset
-    )
+    if not active_region.empty:
 
-    VCSEL_modified = pd.concat(
-        [
-            VCSEL[:index_cavity],
-            cavity_with_active_region,
-            VCSEL[index_cavity + 1 :],
-        ],
-        ignore_index=True,
-    )
-    VCSEL_modified = reset_position(VCSEL_modified)
+        index_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")].index.values[0]
+        n_cavity = VCSEL.at[index_cavity, "n"]
+
+        cavity_with_active_region = structure_embedding(
+            active_region,
+            n_embedding=n_cavity,
+            d_embedding=d_embedding / 2,
+            offset=offset,
+        )
+
+        VCSEL_modified = pd.concat(
+            [
+                VCSEL[:index_cavity],
+                cavity_with_active_region,
+                VCSEL[index_cavity + 1 :],
+            ],
+            ignore_index=True,
+        )
+        VCSEL_modified = reset_position(VCSEL_modified)
+
     return VCSEL_modified
 
 

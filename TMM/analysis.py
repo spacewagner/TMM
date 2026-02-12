@@ -36,7 +36,9 @@ from TMM.optics_utils import (
     VCSEL_photon_lifetime,
     VCSEL_threshold_gain,
     coextinction_to_loss,
+    n_effective,
 )
+
 from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
 
 from TMM.structure_builder import (
@@ -51,6 +53,7 @@ from TMM.structure_builder import (
     interpolate_structure,
     flip_structure,
     VCSEL_embedding_active_region,
+    reset_position,
 )
 
 from TMM.outputs import (
@@ -702,6 +705,99 @@ def analyse_reflectivity_tuning(
     return structure_coating_properties, structure_etching_properties
 
 
+def structure_calculate_n_effective(
+    results_electrical_field, pos_start, pos_stop, Plot=True
+):
+
+    structure_interpolated = results_electrical_field.structure_interpolated
+
+    idx_start = np.argmin(
+        abs(np.array(structure_interpolated["position"].values) - pos_start)
+    )
+    idx_stop = np.argmin(
+        abs(np.array(structure_interpolated["position"].values) - pos_stop)
+    )
+    structure_ROI = structure_interpolated.iloc[idx_start : idx_stop + 1]
+
+    n_arr = structure_ROI["n"]
+    d_arr = structure_ROI["d"]
+    pos_arr = structure_ROI["position"]
+    field_values_arr = results_electrical_field.field_values_arr[
+        idx_start : idx_stop + 1
+    ]
+    field_magnitude_arr = abs(field_values_arr) ** 2
+
+    n_eff = n_effective(n_arr, d_arr, field_values_arr)
+
+    if Plot:
+        plt.plot(pos_arr, n_arr)
+        plt.plot(
+            pos_arr, field_magnitude_arr / np.max(field_magnitude_arr) * np.max(n_arr)
+        )
+
+        plt.axhline(
+            n_eff, linestyle=":", label=f"effective refractive index: {n_eff:.2f}"
+        )
+        plt.show()
+
+    return n_eff
+
+
+def penetration_depth_from_field_distribution(
+    results_electrical_field, I_ref, pos_start, pos_stop, Plot=True
+):
+
+    structure_interpolated = results_electrical_field.structure_interpolated
+
+    idx_start = np.argmin(
+        abs(np.array(structure_interpolated["position"].values) - pos_start)
+    )
+    idx_stop = np.argmin(
+        abs(np.array(structure_interpolated["position"].values) - pos_stop)
+    )
+    structure_ROI = structure_interpolated.iloc[idx_start : idx_stop + 1]
+
+    n_arr = structure_ROI["n"].values
+    d_arr = structure_ROI["d"].values
+    pos_arr = structure_ROI["position"].values
+    field_values_arr = results_electrical_field.field_values_arr[
+        idx_start : idx_stop + 1
+    ]
+    field_magnitude_arr = abs(field_values_arr) ** 2
+
+    # here assume that for DBR the magnutude at interface is maximum
+    L_penetration_energy = np.sum((field_magnitude_arr * d_arr)) / I_ref
+    L_penetration_phase = (
+        2 * L_penetration_energy
+    )  # approximately value of michalzik eq. 2.5
+
+    if Plot:
+
+        plt.plot(pos_arr, n_arr)
+        plt.plot(
+            pos_arr, field_magnitude_arr / np.max(field_magnitude_arr) * np.max(n_arr)
+        )
+
+        plt.axvline(
+            pos_stop - L_penetration_energy,
+            linestyle="--",
+            label=f"Energy Penetration: {L_penetration_energy*1e9:.2f}nm",
+        )
+        plt.axvline(
+            pos_stop - L_penetration_phase,
+            linestyle="--",
+            color="tab:red",
+            label=f"Phase Penetration: {L_penetration_phase*1e9:.2f}nm",
+        )
+        plt.legend()
+        plt.show()
+
+    print(f"Energy Penetration: {L_penetration_energy*1e9:.2f} nm")
+    print(f"Phase Penetration: {L_penetration_phase*1e9:.2f} nm")
+
+    return L_penetration_energy, L_penetration_phase
+
+
 @dataclass
 class DBR_Properties:
     DBR: pd.DataFrame
@@ -715,7 +811,10 @@ class DBR_Properties:
     field_positions_arr: np.ndarray
     field_values_arr: np.ndarray
     n_field_arr: np.ndarray
-    l_eff: float
+    n_effective: float
+    L_penetration_michalzik: float
+    L_penetration_phase: float
+    L_penetration_energy: float
     interface_position: float
 
 
@@ -733,7 +832,7 @@ def analyse_DBR(
 
 
     TODO
-
+    DBR has to be presented with the incident of light from the right, so top DBR needs to be flipped
     Calculate penetration depth michalzik eq. 2.5
     """
 
@@ -741,8 +840,34 @@ def analyse_DBR(
         DBR, wavelength_arr, Plot=False
     )
 
-    DBR_field_properties_results = calculate_electrical_field(
+    results_electrical_field = calculate_electrical_field(
         DBR, target_wavelength, Plot=False
+    )
+
+    structure_interpolated = results_electrical_field.structure_interpolated
+
+    pos_start = structure_interpolated["position"].values[0]
+    pos_stop = (
+        structure_interpolated.loc[
+            (structure_interpolated["name"] == "DBR_1")
+            | (structure_interpolated["name"] == "DBR_2")
+        ]["position"].values[-1]
+        + structure_interpolated.loc[
+            (structure_interpolated["name"] == "DBR_1")
+            | (structure_interpolated["name"] == "DBR_2")
+        ]["d"].values[-1]
+    )
+
+    I_ref = np.max(np.abs(results_electrical_field.field_values_arr) ** 2)
+
+    L_penetration_energy, L_penetration_phase = (
+        penetration_depth_from_field_distribution(
+            results_electrical_field, I_ref, pos_start, pos_stop, Plot=Plot
+        )
+    )
+
+    n_eff = structure_calculate_n_effective(
+        results_electrical_field, pos_start, pos_stop, Plot=Plot
     )
 
     idx_target = np.argmin(np.abs(wavelength_arr - target_wavelength))
@@ -759,7 +884,9 @@ def analyse_DBR(
 
     n1 = DBR.loc[(DBR["name"] == "DBR_1")]["n"].values[0]
     n2 = DBR.loc[(DBR["name"] == "DBR_2")]["n"].values[0]
-    l_eff = DBR_penetration_depth(n1, n2, DBR_r_at_target, target_wavelength)
+    L_penetration_michalzik = DBR_penetration_depth(
+        n1, n2, DBR_r_at_target, target_wavelength
+    )
     interface_position = DBR.iloc[-1]["position"]
 
     results = DBR_Properties(
@@ -771,29 +898,36 @@ def analyse_DBR(
         phase_arr=DBR_optical_properties_result.phase_arr,
         idx_at_target=int(idx_target),
         stopband_width=DBR_stopband_width,
-        field_positions_arr=DBR_field_properties_results.field_positions_arr,
-        field_values_arr=DBR_field_properties_results.field_values_arr,
-        n_field_arr=DBR_field_properties_results.n_field_arr,
-        l_eff=l_eff,
+        field_positions_arr=results_electrical_field.field_positions_arr,
+        field_values_arr=results_electrical_field.field_values_arr,
+        n_field_arr=results_electrical_field.n_field_arr,
+        n_effective=n_eff,
+        L_penetration_michalzik=L_penetration_michalzik,
+        L_penetration_phase=L_penetration_phase,
+        L_penetration_energy=L_penetration_energy,
         interface_position=interface_position,
     )
 
     if Plot:
         plot_structure(DBR)
         plt.plot(
-            np.array(DBR_field_properties_results.field_positions_arr) * 1e6,
-            abs(DBR_field_properties_results.field_values_arr) ** 2
-            / np.max(abs(DBR_field_properties_results.field_values_arr) ** 2)
-            * np.max(DBR_field_properties_results.n_field_arr),
+            np.array(results_electrical_field.field_positions_arr) * 1e6,
+            abs(results_electrical_field.field_values_arr) ** 2
+            / np.max(abs(results_electrical_field.field_values_arr) ** 2)
+            * np.max(results_electrical_field.n_field_arr),
             color="tab:red",
             label="$|E|^2$",
         )
         plt.axvline(
-            (interface_position - l_eff) * 1e6,
+            (interface_position - L_penetration_phase) * 1e6,
             linestyle=":",
-            color="black",
-            label=f"l_eff = {l_eff*1e6:.3f}$\\mu m$ ",
+            label=f"L_penetration = {L_penetration_phase*1e9:.1f}$\\mu m$ ",
         )
+
+        plt.axhline(
+            n_eff, linestyle=":", label=f"effective refractive index: {n_eff:.2f}"
+        )
+
         plt.legend()
         plt.show()
         plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.R_arr)
@@ -814,7 +948,14 @@ def analyse_DBR(
         print(f"DBR reflectivity: {DBR_r_at_target:.6f}")
         print(f"DBR phase: {DBR_phase_at_target:.2f}")
         print(f"DBR stopband width: {DBR_stopband_width*1e9:.2f} nm")
-        print(f"DBR effective penetration depth: {l_eff*1e6:.3f} um")
+        print(f"DBR penetration depth Michalzik: {L_penetration_michalzik*1e9:.1f} nm")
+        print(
+            f"DBR penetration depth phase numerical: {L_penetration_phase*1e9:.1f} nm"
+        )
+        print(
+            f"DBR penetration depth energy numerical: {L_penetration_energy*1e9:.1f} nm"
+        )
+        print(f"DBR effective refractive index: {n_eff:.2f}")
 
     return results
 
@@ -836,7 +977,7 @@ class VCSELs_DBR_Properties:
     field_positions_top_arr: np.ndarray
     field_values_top_arr: np.ndarray
     n_field_top_arr: np.ndarray
-    l_eff_top: float
+    L_penetration_phase_top: float
     interface_position_top: float
 
     R_bottom_arr: np.ndarray
@@ -847,7 +988,7 @@ class VCSELs_DBR_Properties:
     field_positions_bottom_arr: np.ndarray
     field_values_bottom_arr: np.ndarray
     n_field_bottom_arr: np.ndarray
-    l_eff_bottom: float
+    L_penetration_phase_bottom: float
     interface_position_bottom: float
 
     L_eff: float
@@ -873,6 +1014,8 @@ def analyse_VCSELs_DBRs(
     :param wavelength_arr: Description
     :param Plot: Description
     :param Print: Description
+
+    TODO include coating on top DBR
     """
 
     VCSEL_real = VCSEL.copy()
@@ -898,6 +1041,11 @@ def analyse_VCSELs_DBRs(
         VCSEL_structure.n_air,
     )
 
+    # additional coatings
+    coating = VCSEL[VCSEL["name"] == "Coating"]
+    DBR_top = pd.concat([DBR_top[:-1], coating, DBR_top[-1:]], ignore_index=True)
+    DBR_top = reset_position(DBR_top)
+
     if VCSEL_structure.coating_arr is not None:
         DBR_top = apply_AR_coating(DBR_top, *VCSEL_structure.coating_arr)
 
@@ -914,7 +1062,11 @@ def analyse_VCSELs_DBRs(
 
     n_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["n"].values[0]
     L_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["d"].values[0]
-    L_eff = L_cavity + DBR_Bottom_properties.l_eff + DBR_Top_properties.l_eff
+    L_eff = (
+        L_cavity
+        + DBR_Bottom_properties.L_penetration_phase
+        + DBR_Top_properties.L_penetration_phase
+    )
     alpha_m = VCSEL_mirror_loss(
         L_eff,
         DBR_Top_properties.R_arr[DBR_Top_properties.idx_at_target],
@@ -939,8 +1091,8 @@ def analyse_VCSELs_DBRs(
 
     n_cavity_eff = (
         n_cavity * L_cavity
-        + DBR_bottom_n_eff * DBR_Bottom_properties.l_eff
-        + DBR_top_n_eff * DBR_Top_properties.l_eff
+        + DBR_bottom_n_eff * DBR_Bottom_properties.L_penetration_phase
+        + DBR_top_n_eff * DBR_Top_properties.L_penetration_phase
     ) / L_eff
 
     v_gr = const.c / n_cavity_eff
@@ -962,7 +1114,7 @@ def analyse_VCSELs_DBRs(
         field_positions_top_arr=DBR_Top_properties.field_positions_arr,
         field_values_top_arr=DBR_Top_properties.field_values_arr,
         n_field_top_arr=DBR_Top_properties.n_field_arr,
-        l_eff_top=DBR_Top_properties.l_eff,
+        L_penetration_phase_top=DBR_Top_properties.L_penetration_phase,
         interface_position_top=DBR_Top_properties.interface_position,
         R_bottom_arr=DBR_Bottom_properties.R_arr,
         T_bottom_arr=DBR_Bottom_properties.T_arr,
@@ -972,7 +1124,7 @@ def analyse_VCSELs_DBRs(
         field_positions_bottom_arr=DBR_Bottom_properties.field_positions_arr,
         field_values_bottom_arr=DBR_Bottom_properties.field_values_arr,
         n_field_bottom_arr=DBR_Bottom_properties.n_field_arr,
-        l_eff_bottom=DBR_Bottom_properties.l_eff,
+        L_penetration_phase_bottom=DBR_Bottom_properties.L_penetration_phase,
         interface_position_bottom=DBR_Bottom_properties.interface_position,
         L_eff=L_eff,
         alpha_m=alpha_m,
@@ -1001,14 +1153,17 @@ def analyse_VCSELs_DBRs(
             label="$norm. |E|^2$",
         )
         ax1.axvline(
-            (DBR_Bottom_properties.interface_position - DBR_Bottom_properties.l_eff)
+            (
+                DBR_Bottom_properties.interface_position
+                - DBR_Bottom_properties.L_penetration_phase
+            )
             * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_Bottom_properties.l_eff*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Bottom_properties.L_penetration_phase*1e9:.1f} nm",
         )
         ax1.minorticks_on()
-        ax1.grid(which="both", linestyle="--", linewidth=0.5)
+        ax1.grid(which="major", linestyle="-", linewidth=0.4)
         ax1.tick_params(direction="in", which="both", top=True, right=True)
         ax1.autoscale(enable=True, axis="x", tight=True)
         ax1.autoscale(enable=True, axis="y", tight=True)
@@ -1043,15 +1198,15 @@ def analyse_VCSELs_DBRs(
             (
                 DBR_top_total_length
                 - DBR_Top_properties.interface_position
-                + DBR_Top_properties.l_eff
+                + DBR_Top_properties.L_penetration_phase
             )
             * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_Top_properties.l_eff*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Top_properties.L_penetration_phase*1e6:.2f}$\\mu m$ ",
         )
         ax2.minorticks_on()
-        ax2.grid(which="both", linestyle="--", linewidth=0.5)
+        ax2.grid(which="major", linestyle="-", linewidth=0.4)
         ax2.tick_params(direction="in", which="both", top=True, right=True)
         ax2.autoscale(enable=True, axis="x", tight=True)
         ax2.autoscale(enable=True, axis="y", tight=True)
@@ -1071,7 +1226,7 @@ def analyse_VCSELs_DBRs(
             label=f"$DBR_T$: {DBR_Top_properties.R_arr[DBR_Top_properties.idx_at_target]:.5}",
         )
         ax3.minorticks_on()
-        ax3.grid(which="both", linestyle="--", linewidth=0.5)
+        ax3.grid(which="major", linestyle="-", linewidth=0.4)
         ax3.tick_params(direction="in", which="both", top=True, right=True)
         ax3.autoscale(enable=True, axis="x", tight=True)
         ax3.set_ylim(0, 1)
@@ -1085,7 +1240,7 @@ def analyse_VCSELs_DBRs(
         )
         ax4.plot(wavelength_arr * 1e9, DBR_Top_properties.phase_arr, label="Top DBR")
         ax4.minorticks_on()
-        ax4.grid(which="both", linestyle="--", linewidth=0.5)
+        ax4.grid(which="major", linestyle="-", linewidth=0.4)
         ax4.tick_params(direction="in", which="both", top=True, right=True)
         ax4.autoscale(enable=True, axis="x", tight=True)
         ax4.set_ylim(-np.pi, np.pi)
@@ -1122,10 +1277,10 @@ def analyse_VCSELs_DBRs(
         )
         print(f"Top DBR stopband width: {DBR_Top_properties.stopband_width*1e9:.2f} nm")
         print(
-            f"Bottom DBR effective penetration depth: {DBR_Bottom_properties.l_eff*1e6:.3f} um"
+            f"Bottom DBR phase penetration depth: {DBR_Bottom_properties.L_penetration_phase*1e9:.1f} um"
         )
         print(
-            f"Top DBR effective penetration depth: {DBR_Top_properties.l_eff*1e6:.3f} um"
+            f"Top DBR phase penetration depth: {DBR_Top_properties.L_penetration_phase*1e9:.1f} um"
         )
         print(f"Effective cavity length: {L_eff*1e6:.3f} um")
         print(f"Mirror loss: {alpha_m*1e-2:.2f} /cm")
@@ -1176,7 +1331,7 @@ class VCSEL_Properties:
     field_positions_top_arr: np.ndarray
     field_values_top_arr: np.ndarray
     n_field_top_arr: np.ndarray
-    l_eff_top: float
+    L_penetration_phase_top: float
     interface_position_top: float
 
     R_bottom_arr: np.ndarray
@@ -1187,7 +1342,7 @@ class VCSEL_Properties:
     field_positions_bottom_arr: np.ndarray
     field_values_bottom_arr: np.ndarray
     n_field_bottom_arr: np.ndarray
-    l_eff_bottom: float
+    L_penetration_phase_bottom: float
     interface_position_bottom: float
 
     L_eff: float
@@ -1229,6 +1384,9 @@ def analyse_VCSEL(
     print_details=True,
     Save_to="pdf",
 ):
+    """
+    TODO include top coating, show effective cavity length
+    """
 
     if plot_details:
         plot_structure(VCSEL)
@@ -1286,6 +1444,11 @@ def analyse_VCSEL(
         VCSEL_structure.n_air,
     )
 
+    # additional coatings
+    coating = VCSEL[VCSEL["name"] == "Coating"]
+    DBR_top = pd.concat([DBR_top[:-1], coating, DBR_top[-1:]], ignore_index=True)
+    DBR_top = reset_position(DBR_top)
+
     # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
     # DBR_top_coating_properties = analyse_AR_coating(
     #     DBR_top,
@@ -1299,8 +1462,8 @@ def analyse_VCSEL(
     #     DBR_top, target_wavelength, resolution=1e-9, Plot=False
     # )
 
-    DBR_top_etching_properties, DBR_top_coating_properties = (
-        analyse_reflectivity_tuning(VCSEL, target_wavelength, Plot=plot_details)
+    DBR_top_coating_properties, DBR_top_etching_properties = (
+        analyse_reflectivity_tuning(DBR_top, target_wavelength, Plot=plot_details)
     )
 
     VCSEL_field_properties_results = analyse_electrical_field(
@@ -1352,7 +1515,7 @@ def analyse_VCSEL(
         field_positions_top_arr=VCSELs_DBR_properties.field_positions_top_arr,
         field_values_top_arr=VCSELs_DBR_properties.field_values_top_arr,
         n_field_top_arr=VCSELs_DBR_properties.n_field_top_arr,
-        l_eff_top=VCSELs_DBR_properties.l_eff_top,
+        L_penetration_phase_top=VCSELs_DBR_properties.L_penetration_phase_top,
         interface_position_top=VCSELs_DBR_properties.interface_position_top,
         R_bottom_arr=VCSELs_DBR_properties.R_bottom_arr,
         T_bottom_arr=VCSELs_DBR_properties.T_bottom_arr,
@@ -1362,7 +1525,7 @@ def analyse_VCSEL(
         field_positions_bottom_arr=VCSELs_DBR_properties.field_positions_bottom_arr,
         field_values_bottom_arr=VCSELs_DBR_properties.field_values_bottom_arr,
         n_field_bottom_arr=VCSELs_DBR_properties.n_field_bottom_arr,
-        l_eff_bottom=VCSELs_DBR_properties.l_eff_bottom,
+        L_penetration_phase_bottom=VCSELs_DBR_properties.L_penetration_phase_bottom,
         interface_position_bottom=VCSELs_DBR_properties.interface_position_bottom,
         L_eff=VCSELs_DBR_properties.L_eff,
         alpha_m=VCSELs_DBR_properties.alpha_m,
@@ -1456,6 +1619,7 @@ def analyse_VCSEL_lifetime_tuning(
     TODO
 
     Expand for g_threshold by collecting Gamma_z and calculating (alpha_i-alpha_mirror)/Gamma_z. This needs a full electrical analysis of each point, significantly increasing. Maybe Gamma_z = const. can be justified for approximation.
+    Penetration depth varies around 1% with coating/etching, maybe it should be recalculated from field dstribution but it will extend the computation time a lot.
 
     """
 
@@ -1476,7 +1640,37 @@ def analyse_VCSEL_lifetime_tuning(
     )
 
     VCSEL_structure = get_VCSEL_structure(VCSEL)
+    VCSEL_structure_interpolated = results_electrical_field.structure_interpolated
 
+    Gamma_z = results_electrical_field.Gamma_z
+
+    idx_active_region = VCSEL_modified[
+        VCSEL_modified["name"].str.contains("Active_Region")
+    ].index
+    if idx_active_region.empty != True:
+        Gamma_z = results_electrical_field.Gamma_z_active_region
+
+    # get cavity indices for passive and active VCSEL structures for later calculation of effective cavity length and effective refractive index
+    idx_cavity = VCSEL_structure_interpolated.loc[
+        VCSEL_structure_interpolated["name"] == "Cavity"
+    ].index
+
+    idx_embedding = VCSEL_structure_interpolated.loc[
+        VCSEL_structure_interpolated["name"] == "Embedding"
+    ].index
+
+    if not idx_embedding.empty:
+        idx_cavity = idx_embedding
+
+    # filter cavity structure
+    cavity = VCSEL_structure_interpolated.iloc[idx_cavity[0] : idx_cavity[-1]]
+
+    # define start and stop of cavity
+    pos_start = cavity["position"].values[0]
+    pos_stop = cavity["position"].values[-1] + cavity["d"].values[-1]
+    L_cavity = pos_stop - pos_start
+
+    # filter DBRs
     DBR_bottom = build_DBR_structure(
         VCSEL_structure.n_bottom_1,
         VCSEL_structure.n_bottom_2,
@@ -1495,17 +1689,20 @@ def analyse_VCSEL_lifetime_tuning(
         VCSEL_structure.n_air,
     )
 
-    # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction
-    DBR_top_coating_properties = analyse_AR_coating(
-        DBR_top,
-        target_wavelength,
-        n_coating=n_coating,
-        resolution=resolution,
-        Plot=False,
-    )
-    plt.show()
-    DBR_top_etching_properties = analyse_etching(
-        DBR_top, target_wavelength, resolution=resolution, Plot=False
+    # additional coatings on top DBR
+    coating = VCSEL[VCSEL["name"] == "Coating"]
+    DBR_top = pd.concat([DBR_top[:-1], coating, DBR_top[-1:]], ignore_index=True)
+    DBR_top = reset_position(DBR_top)
+
+    # here the fact is used that for lossles materials the transfermatrix is invariant for incident direction TODO need to check
+    DBR_top_coating_properties, DBR_top_etching_properties = (
+        analyse_reflectivity_tuning(
+            DBR_top,
+            target_wavelength,
+            n_coating=n_coating,
+            resolution=resolution,
+            Plot=False,
+        )
     )
     plt.show()
 
@@ -1517,83 +1714,106 @@ def analyse_VCSEL_lifetime_tuning(
         Print=False,
     )
 
+    # DBR top needs to be flipped because incident light is coming from cavity side
+    DBR_top_properties = analyse_DBR(
+        flip_structure(DBR_top),
+        target_wavelength,
+        np.array([target_wavelength]),
+        Plot=False,
+        Print=False,
+    )
+
     # this is the precise method, maybe change in effective penetration depth is neglectable, therefore DBR_top_l_eff before coating might be sufficient. Variation for ar coating < 1nm, for etch < 5nm
 
-    n1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["n"].values[0]
-    n2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["n"].values[0]
+    # n1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["n"].values[0]
+    # n2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["n"].values[0]
 
-    DBR_top_l_eff_coating_arr = []
+    L_penetration_phase_bottom = DBR_bottom_properties.L_penetration_phase  # constant
+    L_penetration_phase_top = (
+        DBR_top_properties.L_penetration_phase
+    )  # varies with coating/etching +-1%
+
+    DBR_top_L_penetration_coating_arr = []
     for d_coating in DBR_top_coating_properties.d_arr:
         DBR_top_AR = apply_AR_coating(DBR_top, n_coating, d_coating)
 
         M_top_DBR = transfer_matrix(DBR_top_AR, target_wavelength)
         R_top_DBR = calculate_reflectivity(M_top_DBR)
-        l_eff = DBR_penetration_depth(n1, n2, R_top_DBR, target_wavelength)
-        DBR_top_l_eff_coating_arr.append(l_eff)
 
-    DBR_top_l_eff_etch_arr = []
+        # this would be the precise method, but requires a lot of computation for 1% more precision
+        # DBR_top_properties_temp = analyse_DBR(
+        #     flip_structure(DBR_top_AR),
+        #     target_wavelength,
+        #     np.array([target_wavelength]),
+        #     Plot=False,
+        #     Print=False,
+        # )
+        # DBR_top_L_penetration_coating_arr.append(
+        #     DBR_top_properties_temp.L_penetration_phase
+        # )
+        DBR_top_L_penetration_coating_arr.append(
+            L_penetration_phase_top
+        )  # approxmimation with constant penetration depth
+
+    DBR_top_L_penetration_etch_arr = []
     for d_etch in DBR_top_etching_properties.d_arr:
         DBR_top_etch = apply_etch(DBR_top, d_etch)
 
         M_top_DBR = transfer_matrix(DBR_top_etch, target_wavelength)
         R_top_DBR = calculate_reflectivity(M_top_DBR)
-        l_eff = DBR_penetration_depth(n1, n2, R_top_DBR, target_wavelength)
-        DBR_top_l_eff_etch_arr.append(l_eff)
 
-    n_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["n"].values[0]
-    L_cavity = VCSEL.loc[(VCSEL["name"] == "Cavity")]["d"].values[0]
+        # this would be the precise method, but requires a lot of computation for 1% more precision
+        # DBR_top_properties_temp = analyse_DBR(
+        #     flip_structure(DBR_top_etch),
+        #     target_wavelength,
+        #     np.array([target_wavelength]),
+        #     Plot=False,
+        #     Print=False,
+        # )
+        # DBR_top_L_penetration_etch_arr.append(
+        #     DBR_top_properties_temp.L_penetration_phase
+        # )
 
+        DBR_top_L_penetration_etch_arr.append(
+            L_penetration_phase_top
+        )  # approxmimation with constant penetration depth
+
+    # combine calculated cavity length and penetration depths to effectove cavity length
     L_cavity_etch_arr = [L_cavity] * len(DBR_top_etching_properties.d_arr)
-    DBR_bottom_l_eff_etch_arr = [DBR_bottom_properties.l_eff] * len(
-        DBR_top_etching_properties.d_arr
-    )
+    DBR_bottom_L_penetration_etch_arr = [
+        DBR_bottom_properties.L_penetration_phase
+    ] * len(DBR_top_etching_properties.d_arr)
     L_eff_etch_arr = (
         np.array(L_cavity_etch_arr)
-        + np.array(DBR_top_l_eff_etch_arr)
-        + np.array(DBR_bottom_l_eff_etch_arr)
+        + np.array(DBR_top_L_penetration_etch_arr)
+        + np.array(DBR_bottom_L_penetration_etch_arr)
     )
 
     L_cavity_coating_arr = [L_cavity] * len(DBR_top_coating_properties.d_arr)
-    DBR_bottom_l_eff_coating_arr = [DBR_bottom_properties.l_eff] * len(
-        DBR_top_coating_properties.d_arr
-    )
+    DBR_bottom_L_penetration_coating_arr = [
+        DBR_bottom_properties.L_penetration_phase
+    ] * len(DBR_top_coating_properties.d_arr)
     L_eff_coating_arr = (
         np.array(L_cavity_coating_arr)
-        + np.array(DBR_top_l_eff_coating_arr)
-        + np.array(DBR_bottom_l_eff_coating_arr)
+        + np.array(DBR_top_L_penetration_coating_arr)
+        + np.array(DBR_bottom_L_penetration_coating_arr)
     )
-
-    DBR_bottom_n1 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_1")]["n"].values[0]
-    DBR_bottom_n2 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_2")]["n"].values[0]
-    DBR_bottom_d1 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_1")]["d"].values[0]
-    DBR_bottom_d2 = DBR_bottom.loc[(DBR_bottom["name"] == "DBR_2")]["d"].values[0]
-    DBR_bottom_n_eff = (
-        DBR_bottom_n1 * DBR_bottom_d1 + DBR_bottom_n2 * DBR_bottom_d2
-    ) / (DBR_bottom_d1 + DBR_bottom_d2)
-
-    DBR_top_n1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["n"].values[0]
-    DBR_top_n2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["n"].values[0]
-    DBR_top_d1 = DBR_top.loc[(DBR_top["name"] == "DBR_1")]["d"].values[0]
-    DBR_top_d2 = DBR_top.loc[(DBR_top["name"] == "DBR_2")]["d"].values[0]
-    DBR_top_n_eff = (DBR_top_n1 * DBR_top_d1 + DBR_top_n2 * DBR_top_d2) / (
-        DBR_top_d1 + DBR_top_d2
-    )
-
-    Gamma_z = results_electrical_field.Gamma_z
-
-    idx_active_region = VCSEL_modified[
-        VCSEL_modified["name"].str.contains("Active_Region")
-    ].index
-    if idx_active_region.empty != True:
-        Gamma_z = results_electrical_field.Gamma_z_active_region
 
     alpha_m_etch_arr = []
-    n_cavity_eff_etch_arr = []
+    n_effective_cavity_etch_arr = []
     v_gr_etch_arr = []
     photon_lifetime_etch_arr_arr = [[] for _ in range(len(alpha_i_arr))]
     g_threshold_etch_arr_arr = [[] for _ in range(len(alpha_i_arr))]
 
     for i in range(len(DBR_top_etching_properties.d_arr)):
+
+        n_effective_cavity = structure_calculate_n_effective(
+            results_electrical_field,
+            pos_start - DBR_bottom_L_penetration_etch_arr[i],
+            pos_stop + DBR_top_L_penetration_etch_arr[i],
+            Plot=False,
+        )
+        n_effective_cavity_etch_arr.append(n_effective_cavity)
 
         alpha_m_etch = VCSEL_mirror_loss(
             L_eff_etch_arr[i],
@@ -1602,15 +1822,7 @@ def analyse_VCSEL_lifetime_tuning(
         )
         alpha_m_etch_arr.append(alpha_m_etch)
 
-        n_cavity_eff = (
-            n_cavity * L_cavity
-            + DBR_bottom_n_eff * DBR_bottom_properties.l_eff
-            + DBR_top_n_eff * DBR_top_l_eff_etch_arr[i]
-        ) / L_eff_etch_arr[i]
-
-        n_cavity_eff_etch_arr.append(n_cavity_eff)
-
-        v_gr = const.c / n_cavity_eff
+        v_gr = const.c / n_effective_cavity
         v_gr_etch_arr.append(v_gr)
 
         for i, alpha_i in enumerate(alpha_i_arr):
@@ -1626,11 +1838,19 @@ def analyse_VCSEL_lifetime_tuning(
     )
 
     alpha_m_coating_arr = []
-    n_cavity_eff_coating_arr = []
+    n_effective_cavity_coating_arr = []
     v_gr_coating_arr = []
     photon_lifetime_coating_arr_arr = [[] for _ in range(len(alpha_i_arr))]
     g_threshold_coating_arr_arr = [[] for _ in range(len(alpha_i_arr))]
     for i in range(len(DBR_top_coating_properties.d_arr)):
+
+        n_effective_cavity = structure_calculate_n_effective(
+            results_electrical_field,
+            pos_start - DBR_bottom_L_penetration_coating_arr[i],
+            pos_stop + DBR_top_L_penetration_coating_arr[i],
+            Plot=False,
+        )
+        n_effective_cavity_coating_arr.append(n_effective_cavity)
 
         alpha_m_coating = VCSEL_mirror_loss(
             L_eff_coating_arr[i],
@@ -1639,15 +1859,7 @@ def analyse_VCSEL_lifetime_tuning(
         )
         alpha_m_coating_arr.append(alpha_m_coating)
 
-        n_cavity_eff = (
-            n_cavity * L_cavity
-            + DBR_bottom_n_eff * DBR_bottom_properties.l_eff
-            + DBR_top_n_eff * DBR_top_l_eff_coating_arr[i]
-        ) / L_eff_coating_arr[i]
-
-        n_cavity_eff_coating_arr.append(n_cavity_eff)
-
-        v_gr = const.c / n_cavity_eff
+        v_gr = const.c / n_effective_cavity
         v_gr_coating_arr.append(v_gr)
 
         for i, alpha_i in enumerate(alpha_i_arr):
@@ -1670,14 +1882,14 @@ def analyse_VCSEL_lifetime_tuning(
     alpha_i_arr = np.array(alpha_i_arr)
 
     L_eff_coating_arr = np.array(L_eff_coating_arr)
-    n_cavity_eff_coating_arr = np.array(n_cavity_eff_coating_arr)
+    n_cavity_eff_coating_arr = np.array(n_effective_cavity_coating_arr)
     v_gr_coating_arr = np.array(v_gr_coating_arr)
     alpha_m_coating_arr = np.array(alpha_m_coating_arr)
     photon_lifetime_coating_arr_arr = np.array(photon_lifetime_coating_arr_arr)
     g_threshold_coating_arr_arr = np.array(g_threshold_coating_arr_arr)
 
     L_eff_etch_arr = np.array(L_eff_etch_arr)
-    n_cavity_eff_etch_arr = np.array(n_cavity_eff_etch_arr)
+    n_cavity_eff_etch_arr = np.array(n_effective_cavity_etch_arr)
     v_gr_etch_arr = np.array(v_gr_etch_arr)
     alpha_m_etch_arr = np.array(alpha_m_etch_arr)
     photon_lifetime_etch_arr_arr = np.array(photon_lifetime_etch_arr_arr)

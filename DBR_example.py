@@ -16,6 +16,7 @@ from TMM.structure_builder import (
     plot_structure,
     wavelength_arr_adaptive_mesh,
     flip_structure,
+    apply_AR_coating,
 )
 from TMM.field_solver import calculate_optical_properties
 from TMM.optics_utils import R_theoretical
@@ -25,6 +26,7 @@ from TMM.analysis import (
     analyse_DBR,
     analyse_reflectivity_tuning,
     analyse_etching,
+    penetration_depth_from_field_distribution,
 )
 
 from TMM.optics_utils import refractive_index_AlGaAs_at_940, refractive_index_SiO2
@@ -52,6 +54,7 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
     target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
 )
 
+
 # Build DBR structure
 DBR = build_DBR_structure(
     n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
@@ -59,29 +62,29 @@ DBR = build_DBR_structure(
 # Plot the DBR structure
 plot_structure(DBR)
 
+
 # %%
 # run full analysis on the DBR
 DBR_results = analyse_DBR(DBR, target_wavelength, wavelength_arr)
 
+
 # %%
-
-"""
-Flip the structure to imitate incident wave from the opposite side.
-
-"""
-
+# Top DBR needs to be flipped, since incident comes from cavity towards surface
 DBR_flipped = flip_structure(DBR)
-plot_structure(DBR_flipped)
-plt.show()
-
 DBR_flipped_results = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
+
+
+#%% Easily investigate coatings
+DBR_coated = flip_structure(apply_AR_coating(DBR, 2, 100e-9))
+DBR_coated_results = analyse_DBR(DBR_coated, target_wavelength, wavelength_arr)
+
 
 # %% Reflectivity tuning
 n_coating = refractive_index_SiO2(target_wavelength)
 analyse_reflectivity_tuning(DBR, target_wavelength, n_coating=n_coating)
 
-# %%
 
+# %%
 """
 Calculate optical response.
 
@@ -94,17 +97,17 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
 DBR_optical_properties_result = calculate_optical_properties(DBR, wavelength_arr)
 
 # %%
-
 """
 Calculate electrical field distribution.
 
 """
 
-DBR_flipped_field_properties_results = analyse_electrical_field(
+results_electrical_field = analyse_electrical_field(
     DBR_flipped, target_wavelength
 )
 
 # %% Reflectivity over N for even amount of layers
+
 
 n1 = AlAs
 n2 = GaAs
@@ -328,4 +331,58 @@ plt.xlabel("$\\delta L_{g} ~ (\\pi)$")
 plt.ylabel("$\\angle r_g$")
 plt.legend()
 plt.show()
+
+# %% Analyse how the penetration depth changes with the coatings thickness
+
+n1 = GaAs
+n2 = AlAs
+n_substrate = 3.3
+n_air = 1
+N = 21.5
+
+d_coating_arr = np.linspace(0, 500e-9, 100)
+L_penetration_phase_arr = []
+
+for d_coating in d_coating_arr:
+
+    # Build DBR structure
+    DBR = build_DBR_structure(
+        n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
+    )
+    DBR = apply_AR_coating(DBR, 2, d_coating)
+    DBR_flipped = flip_structure(DBR)
+
+    results_electrical_field = analyse_electrical_field(
+        DBR_flipped, target_wavelength, Plot=False
+    )
+    structure_interpolated = results_electrical_field.structure_interpolated
+
+    pos_start = structure_interpolated["position"].values[0]
+    pos_stop = (
+        structure_interpolated.loc[
+            (structure_interpolated["name"] == "DBR_1")
+            | (structure_interpolated["name"] == "DBR_2")
+        ]["position"].values[-1]
+        + structure_interpolated.loc[
+            (structure_interpolated["name"] == "DBR_1")
+            | (structure_interpolated["name"] == "DBR_2")
+        ]["d"].values[-1]
+    )
+
+    I_ref = np.max(np.abs(results_electrical_field.field_values_arr) ** 2)
+
+    L_penetration_energy, L_penetration_phase = (
+        penetration_depth_from_field_distribution(
+            results_electrical_field, I_ref, pos_start, pos_stop, Plot=False
+        )
+    )
+    L_penetration_phase_arr.append(L_penetration_phase)
+
+
+L_penetration_phase_arr = np.array(L_penetration_phase_arr)
+plt.plot(d_coating_arr * 1e9, L_penetration_phase_arr * 1e9)
+plt.xlabel("Coating Thickness (nm)")
+plt.ylabel("DBR Penetration Depth (nm)")
+plt.show()
+
 # %%
