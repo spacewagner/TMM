@@ -15,6 +15,10 @@ define analysis methods as classes. More complex methods should inherit attribut
 
 Add ticks at the color bar for the refractive indices that are actually shown (reflectivity tuning)
 
+-Remove substrate/air layer WHENEVER calculating phase changes.
+-Move all coating and etching conciderations to the DBR demonstration. Only be concerned with their reflectivity change when it comes to the VCSEL demonstration.
+
+
 """
 
 from matplotlib.pylab import norm
@@ -290,6 +294,7 @@ T_arr = np.linspace(300, 400, 5)
 VCSEL_temperature_properties = calculate_temperature_shift(
     VCSEL, target_wavelength, T_arr
 )
+
 
 # %% Lifetime Tuning
 n_coating = refractive_index_SiO2(target_wavelength)

@@ -97,7 +97,7 @@ def calculate_optical_properties(structure, wavelength_arr, Plot=True):
         plt.figure()
         plt.plot(wavelength_arr, phase_arr)
         plt.xlabel("Wavelength (m)")
-        plt.ylabel("Phase (rad)")
+        plt.ylabel("Phase (pi)")
         plt.grid(alpha=0.3)
         plt.show()
 

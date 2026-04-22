@@ -31,12 +31,14 @@ from TMM.optics_utils import (
     wavelength_to_frequency,
     transfer_matrix,
     calculate_reflectivity,
+    calculate_phase,
     DBR_penetration_depth,
     VCSEL_mirror_loss,
     VCSEL_photon_lifetime,
     VCSEL_threshold_gain,
     coextinction_to_loss,
     n_effective,
+    R_theoretical,
 )
 
 from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
@@ -54,6 +56,7 @@ from TMM.structure_builder import (
     flip_structure,
     VCSEL_embedding_active_region,
     reset_position,
+    get_DBR_structure,
 )
 
 from TMM.outputs import (
@@ -177,6 +180,7 @@ def analyse_electrical_field(
 class TuningProperties:
     d_arr: np.ndarray
     R_arr: np.ndarray
+    phase_arr: np.ndarray
     R_tuning_range: float
     n_coating: float
     N_arr: np.ndarray
@@ -189,17 +193,29 @@ def analyse_AR_coating(
     d_coating_max = target_wavelength / (2 * n_coating)
     d_coating_arr = np.arange(0, d_coating_max + 1e-12, resolution)
     R_arr = []
+    phase_arr = []
 
     for d_coating in d_coating_arr:
         structure_AR = apply_AR_coating(structure, n_coating, d_coating)
+        structure_AR = flip_structure(
+            structure_AR
+        )  # this is importand to conserve phase response
         M = transfer_matrix(structure_AR, target_wavelength)
         R_arr.append(calculate_reflectivity(M))
+        phase_arr.append(calculate_phase(M))
 
     R_tuning_range = max(R_arr) - min(R_arr)
     R_arr = np.array(R_arr)
+    phase_arr = np.array(phase_arr)
     n_arr = np.array([n_coating] * len(R_arr))
     structure_coating_properties = TuningProperties(
-        d_coating_arr, R_arr, R_tuning_range, n_coating, N_arr=np.array([]), n_arr=n_arr
+        d_coating_arr,
+        R_arr,
+        phase_arr,
+        R_tuning_range,
+        n_coating,
+        N_arr=np.array([]),
+        n_arr=n_arr,
     )
 
     if Plot:
@@ -286,10 +302,15 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=T
     n_arr = np.concatenate(n_arr)
 
     R_arr = []
+    phase_arr = []
     for d_etch in d_etch_arr:
         structure_etch = apply_etch(structure, d_etch)
+        structure_etch = flip_structure(
+            structure_etch
+        )  # this is importand to conserve phase response
         M = transfer_matrix(structure_etch, target_wavelength)
         R_arr.append(calculate_reflectivity(M))
+        phase_arr.append(calculate_phase(M))
 
     # TODO calculate tuning range in each layer
     top_layer_d = structure.iloc[-2]["d"]
@@ -297,8 +318,15 @@ def analyse_etching(structure, target_wavelength, resolution=1e-9, N=2.0, Plot=T
     R_tuning_range = abs(R_arr[top_layer_d_idx] - R_arr[0])
 
     R_arr = np.array(R_arr)
+    phase_arr = np.array(phase_arr)
     structure_etch_properties = TuningProperties(
-        d_etch_arr, R_arr, R_tuning_range, n_coating=0.0, N_arr=N_arr, n_arr=n_arr
+        d_etch_arr,
+        R_arr,
+        phase_arr,
+        R_tuning_range,
+        n_coating=0.0,
+        N_arr=N_arr,
+        n_arr=n_arr,
     )
 
     if Plot:
@@ -836,6 +864,22 @@ def analyse_DBR(
     Calculate penetration depth michalzik eq. 2.5
     """
 
+    DBR_Structure = get_DBR_structure(DBR, target_wavelength)
+    DBR_reconstruction = build_DBR_structure(*DBR_Structure.structure_arr)
+
+    if DBR_Structure.coating_arr is not None:
+        DBR_reconstruction = apply_AR_coating(
+            DBR_reconstruction, *DBR_Structure.coating_arr
+        )
+
+    R_theory_uncoated = R_theoretical(
+        DBR_Structure.N,
+        DBR_Structure.n_1,
+        DBR_Structure.n_2,
+        DBR_Structure.n_substrate,
+        DBR_Structure.n_air,
+    )
+
     DBR_optical_properties_result = calculate_optical_properties(
         DBR, wavelength_arr, Plot=False
     )
@@ -873,6 +917,14 @@ def analyse_DBR(
     idx_target = np.argmin(np.abs(wavelength_arr - target_wavelength))
     DBR_r_at_target = DBR_optical_properties_result.R_arr[idx_target]
     DBR_phase_at_target = DBR_optical_properties_result.phase_arr[idx_target]
+
+    DBR_phase_gradient = [0]    #for some analysis I use just [target_wavelength] here
+    DBR_phase_gradient_at_target = 0
+    if len(wavelength_arr) > 1:
+        DBR_phase_gradient = np.gradient(
+            np.unwrap(DBR_optical_properties_result.phase_arr), wavelength_arr
+        )
+    DBR_phase_gradient_at_target = DBR_phase_gradient[idx_target]
 
     idx_left = np.where(DBR_optical_properties_result.R_arr >= DBR_r_at_target * 0.99)[
         0
@@ -919,9 +971,9 @@ def analyse_DBR(
             label="$|E|^2$",
         )
         plt.axvline(
-            (interface_position - L_penetration_phase) * 1e6,
+            (interface_position - L_penetration_michalzik) * 1e6,
             linestyle=":",
-            label=f"L_penetration = {L_penetration_phase*1e9:.1f}$\\mu m$ ",
+            label=f"L_penetration = {L_penetration_michalzik*1e9:.1f}$\\mu m$ ",
         )
 
         plt.axhline(
@@ -932,6 +984,13 @@ def analyse_DBR(
         plt.show()
         plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.R_arr)
         plt.plot(wavelength_arr * 1e9, DBR_optical_properties_result.T_arr)
+        plt.plot(
+            target_wavelength * 1e9,
+            R_theory_uncoated,
+            linestyle="",
+            marker=".",
+            label="R theoretical uncoated",
+        )
         plt.xlabel("Wavelength (nm)")
         plt.ylabel("Reflectivity")
         plt.show()
@@ -947,6 +1006,9 @@ def analyse_DBR(
         print(f"Results at target wavelength: {target_wavelength*1e9:.3f} nm")
         print(f"DBR reflectivity: {DBR_r_at_target:.6f}")
         print(f"DBR phase: {DBR_phase_at_target:.2f}")
+        print(
+            f"Phase gradient dphi/dlambda at target wavelength: {DBR_phase_gradient_at_target:.2e} rad/m"
+        )
         print(f"DBR stopband width: {DBR_stopband_width*1e9:.2f} nm")
         print(f"DBR penetration depth Michalzik: {L_penetration_michalzik*1e9:.1f} nm")
         print(
@@ -1095,7 +1157,9 @@ def analyse_VCSELs_DBRs(
         + DBR_top_n_eff * DBR_Top_properties.L_penetration_phase
     ) / L_eff
 
-    v_gr = const.c / n_cavity_eff
+    v_gr = (
+        const.c / n_cavity_eff
+    )  # TODO wrong!!!! need group index. Maybe ok for first look
 
     photon_lifetime = VCSEL_photon_lifetime(v_gr, alpha_m, alpha_i)
 
@@ -1155,12 +1219,12 @@ def analyse_VCSELs_DBRs(
         ax1.axvline(
             (
                 DBR_Bottom_properties.interface_position
-                - DBR_Bottom_properties.L_penetration_phase
+                - DBR_Bottom_properties.L_penetration_michalzik
             )
             * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_Bottom_properties.L_penetration_phase*1e9:.1f} nm",
+            label=f"l_eff = {DBR_Bottom_properties.L_penetration_michalzik*1e9:.1f} nm",
         )
         ax1.minorticks_on()
         ax1.grid(which="major", linestyle="-", linewidth=0.4)
@@ -1198,12 +1262,12 @@ def analyse_VCSELs_DBRs(
             (
                 DBR_top_total_length
                 - DBR_Top_properties.interface_position
-                + DBR_Top_properties.L_penetration_phase
+                + DBR_Top_properties.L_penetration_michalzik
             )
             * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_Top_properties.L_penetration_phase*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Top_properties.L_penetration_michalzik*1e6:.2f}$\\mu m$ ",
         )
         ax2.minorticks_on()
         ax2.grid(which="major", linestyle="-", linewidth=0.4)

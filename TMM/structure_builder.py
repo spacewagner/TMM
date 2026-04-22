@@ -41,16 +41,17 @@ def build_DBR_structure(
     position = 0.0
 
     # Substrate (incident side)
+    d_substrate = 0e-9  # has to be 0 to not add to the DBRs phase
     substrate = pd.DataFrame(
         {
             "name": ["Cladding Bottom"],
             "n": [n_substrate],
-            "d": [1e-6],
+            "d": [d_substrate],
             "position": [position],
         }
     )
     structure = substrate.copy()
-    position += 1e-6
+    position += d_substrate
 
     # Bottom DBR
     for i in range(int(N_pairs)):
@@ -78,8 +79,9 @@ def build_DBR_structure(
         position += d_1
 
     # Air (transmission side)
+    d_air = 0e-9
     air = pd.DataFrame(
-        {"name": ["Air"], "n": [n_air], "d": [1e-6], "position": [position]}
+        {"name": ["Air"], "n": [n_air], "d": [d_air], "position": [position]}
     )
     structure = pd.concat([structure, air], ignore_index=True)
 
@@ -288,6 +290,69 @@ class VCSELStructure:
     d_embedding_arr: np.ndarray
     idx_active_region: np.ndarray
     d_embedding: float
+
+
+@dataclass
+class DBRStructure:
+
+    structure_arr: np.ndarray
+    coating_arr: np.ndarray
+
+    n_1: float
+    n_2: float
+    N: float
+    n_substrate: float
+    n_air: float
+
+    n_coating: float
+    d_coating: float
+
+
+def get_DBR_structure(DBR, target_wavelength):
+
+    N = len(DBR[(DBR["name"] == "DBR_1") | (DBR["name"] == "DBR_2")]) / 2
+
+    n_substrate = DBR.iloc[0]["n"]
+    n_1 = DBR.iloc[1]["n"]
+    n_2 = DBR.iloc[2]["n"]
+    n_air = DBR.iloc[-1]["n"]
+
+    n_coating = 0.0
+    d_coating = 0.0
+
+    coating = DBR.loc[(DBR["name"] == "Coating")]
+    if len(coating) == 1:
+        n_coating = coating.iloc[0]["n"]
+        d_coating = coating.iloc[0]["d"]
+    if len(coating) > 1:
+        print("Too many coating layers on top DBR.")
+
+    structure_arr = np.array(
+        [
+            n_1,
+            n_2,
+            N,
+            target_wavelength,
+            n_substrate,
+            n_air,
+        ]
+    )
+
+    coating_arr = np.array([n_coating, d_coating])
+
+    DBR_Structure = DBRStructure(
+        structure_arr,
+        coating_arr,
+        n_1,
+        n_2,
+        N,
+        n_substrate,
+        n_air,
+        n_coating,
+        d_coating,
+    )
+
+    return DBR_Structure
 
 
 def get_VCSEL_structure(VCSEL):

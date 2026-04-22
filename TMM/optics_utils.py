@@ -50,8 +50,8 @@ def transfer_matrix_layer(n: complex, d: float, wavelength: float) -> np.ndarray
     """
     k = 2 * np.pi * n / wavelength
     phi = k * d
-    # the notation +1j/-1j sets +- sign in extinction coefficient. diag(+, -) is physically correct. But since my algorithm sweeps the position from left to right, I need to swap the signs here. There has been no observation of unphysical results by this approach so far, it is solely for convenience of the electrical field solver algorithm.
-    return np.array([[np.exp(-1j * phi), 0.0], [0.0, np.exp(1j * phi)]], dtype=complex)
+    # the notation +1j/-1j sets +- sign in extinction coefficient. diag(+, -) is physically correct. But since my algorithm sweeps the position from left to right, I need to swap the signs here. There has been no observation of unphysical results by this approach so far, it is solely for convenience of the electrical field solver algorithm. Update: This adds an unwanted phase shift to the reflection. Leave it +1j/-1j and keep in mind when adding loss/gain
+    return np.array([[np.exp(+1j * phi), 0.0], [0.0, np.exp(-1j * phi)]], dtype=complex)
 
 
 def transfer_matrix(structure, wavelength):
@@ -162,11 +162,18 @@ def R_theoretical(N, n1, n2, ns, n0):
 #     return (a / b) ** 2
 
 
-def DBR_stopband_width():
+def DBR_stopband_width(n_high, n_low, target_wavelength):
     """
-    TODO
-    Michalzik eq. 2.3
+    TODO include in DBR analysis and compare to numerical value. Compare to Michalzik eq. 2.3, which is an "approximation is valid for small to modest index contrast, where ∆n ≡ nH − nL ≪ n with average index n = (nL + nH)/2." - Koks
+
+    Koks eq. 1
     """
+
+    omega_c = 2 * np.pi * const.c / target_wavelength
+    delta_omega_gap = (
+        omega_c * 4 / np.pi * np.arcsin((n_high - n_low) / (n_high + n_low))
+    )
+    return delta_omega_gap
 
 
 def n_effective(n_arr, d_arr, field_values_arr):
@@ -264,6 +271,16 @@ def refractive_index_AlGaAs_at_940(x):
     return -0.005497270288921783 * x + 3.516202560685546
 
 
+def refractive_index_AlGaAs_at_980(x):
+    """
+    Docstring for refractive_index_at_940
+
+    :param x: Al_x Ga_{1-x} As
+    Fit parameters derived from data available at https://refractiveindex.info
+    """
+    return -0.005358605358805018 * x + 3.495809674448995
+
+
 def refractive_index_SiO2(wl):
     """
     Calculate refractive index of fused silica (SiO₂) using Sellmeier equation.
@@ -295,3 +312,38 @@ def refractive_index_Si3N4(wl):
     b = 40314 * wl**2 / (wl**2 - 1239.842**2)
     n = np.sqrt(a + b + 1)
     return n
+
+
+def refractive_index_xAl_GaAs_at_wl(x, wl):
+    """
+    :param x: Al_x Ga_{1-x} As
+    :param wl: wavelength in m
+    Fit parameters derived from data available at https://refractiveindex.info
+    """
+    wl *= 1e9  # fit parameters were derived for wavelength in nm
+    a = -5.06275965e-06 * np.exp((4.55948593e03 / wl)) - 4.82926314e-03
+    b = 1.59042285e-02 * np.exp((2.39044863e03 / wl)) + 3.31417735e00
+    n = a * x + b
+    return n
+
+
+def dn_dwl_xAl_GaAs_at_wl(x, wl):
+    wl_nm = wl * 1e9  # fit parameters in nm
+
+    # derivatives w.r.t nm
+    da_dwl_nm = -5.06275965e-06 * np.exp(4559.48593 / wl_nm) * (-4559.48593 / wl_nm**2)
+    db_dwl_nm = 1.59042285e-02 * np.exp(2390.44863 / wl_nm) * (-2390.44863 / wl_nm**2)
+
+    # convert back: nm -> m
+    da_dwl = da_dwl_nm * 1e9
+    db_dwl = db_dwl_nm * 1e9
+
+    return x * da_dwl + db_dwl
+
+
+def group_index_xAl_GaAs_at_wl(x, wl):
+    # only valid for AlGaAs
+    # the group index is very important for the group velocity, which affects photon lifetime, mode-spacing and more. It is defined as n-wl*dn/dwl.
+    n = refractive_index_xAl_GaAs_at_wl(x, wl)
+    dn = dn_dwl_xAl_GaAs_at_wl(x, wl)
+    return n - wl * dn

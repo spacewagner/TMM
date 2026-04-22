@@ -17,8 +17,9 @@ from TMM.structure_builder import (
     wavelength_arr_adaptive_mesh,
     flip_structure,
     apply_AR_coating,
+    get_DBR_structure,
 )
-from TMM.field_solver import calculate_optical_properties
+from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
 from TMM.optics_utils import R_theoretical
 
 from TMM.analysis import (
@@ -29,7 +30,7 @@ from TMM.analysis import (
     penetration_depth_from_field_distribution,
 )
 
-from TMM.optics_utils import refractive_index_AlGaAs_at_940, refractive_index_SiO2
+from TMM.optics_utils import refractive_index_xAl_GaAs_at_wl, refractive_index_SiO2
 
 
 # %%
@@ -39,17 +40,17 @@ from TMM.optics_utils import refractive_index_AlGaAs_at_940, refractive_index_Si
 Define DBR structure
 
 """
-target_wavelength = 940e-9
-GaAs = refractive_index_AlGaAs_at_940(0)
-AlAs = refractive_index_AlGaAs_at_940(100)
+target_wavelength = 980e-9
+GaAs = refractive_index_xAl_GaAs_at_wl(0, target_wavelength)
+AlAs = refractive_index_xAl_GaAs_at_wl(100, target_wavelength)
 
-n1 = GaAs
-n2 = AlAs
-n_substrate = 3.3
+n2 = GaAs
+n1 = AlAs
+n_substrate = refractive_index_xAl_GaAs_at_wl(30, target_wavelength)
 n_air = 1
-N = 21.5
+N = 16.0
 
-# Set wavelength range for the spectra by using the adaptive mesh function
+# Set wavelength range for the spectra by using the adaptive mesh function, for higher resolution around the target wavelength
 wavelength_arr = wavelength_arr_adaptive_mesh(
     target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
 )
@@ -59,9 +60,13 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
 DBR = build_DBR_structure(
     n1, n2, N, target_wavelength, n_substrate=n_substrate, n_air=n_air
 )
+# DBR = DBR.iloc[1:-1] #remove substrate and air layer
 # Plot the DBR structure
 plot_structure(DBR)
 
+# analytically calculate reflectivity of an ideal DBR
+R_analytical = R_theoretical(N, n1, n2, n_substrate, n_air)
+print(f"Analytical reflectivity of ideal DBR: {R_analytical*100:.4f} %")
 
 # %%
 # run full analysis on the DBR
@@ -73,17 +78,54 @@ DBR_results = analyse_DBR(DBR, target_wavelength, wavelength_arr)
 DBR_flipped = flip_structure(DBR)
 DBR_flipped_results = analyse_DBR(DBR_flipped, target_wavelength, wavelength_arr)
 
+fig, ax1 = plt.subplots()
+plot_1 = ax1.plot(
+    DBR_flipped_results.wavelength_arr * 1e9, DBR_flipped_results.R_arr, label="abs(r)"
+)
+ax1.set_ylabel("Reflectivity")
+ax2 = ax1.twinx()
+plot_2 = ax2.plot(
+    DBR_flipped_results.wavelength_arr * 1e9,
+    DBR_flipped_results.phase_arr,
+    linestyle="--",
+    label="angle(r)",
+    color=f"C{1}",
+)
+ax2.set_ylabel("Phase")
+lns = plot_1 + plot_2
+labels = [l.get_label() for l in lns]
+plt.legend(lns, labels, loc=0)
+plt.show()
+# %% Recover DBR Structure including the coating
+DBR_Structure = get_DBR_structure(DBR, target_wavelength)
+DBR = build_DBR_structure(*DBR_Structure.structure_arr)
 
-#%% Easily investigate coatings
-DBR_coated = flip_structure(apply_AR_coating(DBR, 2, 100e-9))
+if DBR_Structure.coating_arr is not None:
+    DBR = apply_AR_coating(DBR, *DBR_Structure.coating_arr)
+
+plot_structure(DBR)
+
+# %% Easily investigate coatings
+DBR_coated = flip_structure(
+    apply_AR_coating(DBR, 2, 100e-9)
+)  # flip structure again to have incident from cavity towards surface
+plot_structure(DBR_coated)
 DBR_coated_results = analyse_DBR(DBR_coated, target_wavelength, wavelength_arr)
 
 
 # %% Reflectivity tuning
 n_coating = refractive_index_SiO2(target_wavelength)
-analyse_reflectivity_tuning(DBR, target_wavelength, n_coating=n_coating)
+structure_coating_properties, structure_etching_properties = (
+    analyse_reflectivity_tuning(DBR, target_wavelength, n_coating=n_coating)
+)
+plt.show()
 
-
+plt.plot(
+    structure_coating_properties.d_arr * 1e9, structure_coating_properties.phase_arr
+)
+plt.xlabel("SiO2 Coating Thickness (nm)")
+plt.ylabel("DBR Phase Response")
+plt.show()
 # %%
 """
 Calculate optical response.
@@ -94,7 +136,9 @@ wavelength_arr = wavelength_arr_adaptive_mesh(
     target_wavelength - 100e-9, target_wavelength + 100e-9, target_wavelength, 5e-9
 )
 
-DBR_optical_properties_result = calculate_optical_properties(DBR, wavelength_arr)
+DBR_optical_properties_result = calculate_optical_properties(
+    DBR_flipped, wavelength_arr
+)
 
 # %%
 """
@@ -102,9 +146,7 @@ Calculate electrical field distribution.
 
 """
 
-results_electrical_field = analyse_electrical_field(
-    DBR_flipped, target_wavelength
-)
+results_electrical_field = analyse_electrical_field(DBR_flipped, target_wavelength)
 
 # %% Reflectivity over N for even amount of layers
 
@@ -238,8 +280,18 @@ plt.plot(
     DBR_etching_properties.R_arr,
     label="TMM Results",
 )
-plt.plot(N_arr_even, R_theory_even, marker=".", label="R(2N=even)")
-plt.plot(N_arr_odd, R_theory_odd, marker=".", label="R(2N=odd)")
+DBR_etching_properties.N_arr[np.argmin(DBR_etching_properties.R_arr)]
+plt.scatter(
+    N_arr_even,
+    R_theory_even,
+    marker=".",
+    linestyle="",
+    label="R(2N=even)",
+    color=f"C{1}",
+)
+plt.scatter(
+    N_arr_odd, R_theory_odd, marker=".", linestyle="", label="R(2N=odd)", color=f"C{2}"
+)
 
 
 plt.xlabel("Amount of mirror pairs N")
@@ -266,6 +318,7 @@ calculate_optical_properties(DBR, wavelength_arr)
 """
 Compare with examples from the literature
 Example Coldren p.120 fig. 3.14
+He doesnt specify the substrate and air material, simulation comparable when removing last interfaces
 
 """
 
@@ -334,11 +387,11 @@ plt.show()
 
 # %% Analyse how the penetration depth changes with the coatings thickness
 
-n1 = GaAs
-n2 = AlAs
-n_substrate = 3.3
+n2 = GaAs
+n1 = AlAs
+n_substrate = refractive_index_xAl_GaAs_at_wl(30, target_wavelength)
 n_air = 1
-N = 21.5
+N = 16.0
 
 d_coating_arr = np.linspace(0, 500e-9, 100)
 L_penetration_phase_arr = []
