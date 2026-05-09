@@ -1,0 +1,42 @@
+# Font
+font.size: 8
+axes.labelsize: 8
+axes.titlesize: 8
+legend.fontsize: 8
+
+# Figure
+figure.figsize: 3.34645667, 2.36220472441
+figure.dpi: 300
+
+# Lines
+lines.linewidth: 1
+lines.markersize: 4
+lines.linestyle: -
+
+# Grid
+axes.grid: True
+grid.linestyle: -
+grid.alpha: 1.0
+
+# Ticks
+xtick.minor.visible: True
+ytick.minor.visible: True
+xtick.direction: in
+ytick.direction: in
+xtick.top: True
+ytick.right: True
+
+# Legend
+legend.framealpha: 1
+
+# LaTeX
+text.usetex: True
+text.latex.preamble: \usepackage[locale=US,per-mode=symbol,separate-uncertainty,sticky-per,group-digits=false,detect-all]{siunitx}\usepackage[T1]{fontenc}\usepackage{lmodern}\usepackage{microtype}
+
+# Saving
+savefig.dpi: 300
+savefig.bbox: tight
+savefig.transparent: False
+
+# Optional
+axes.formatter.use_locale: False

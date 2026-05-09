@@ -97,6 +97,7 @@ class ActiveRegionEmbeddingProperties:
 
     d_optimum_arr: np.ndarray
     Gamma_z_optimum_arr: np.ndarray
+    Gamma_z_active_region_optimum_arr: np.ndarray
 
     d_active_region: float
 
@@ -198,12 +199,14 @@ def optimize_embedding_thickness(
     )
     d_optimum_arr = d_embedding_arr[peaks]
     Gamma_z_optimum_arr = Gamma_z_arr[peaks]
+    Gamma_z_active_region_optimum_arr = Gamma_z_active_region_arr[peaks]
     results = ActiveRegionEmbeddingProperties(
         d_embedding_arr=d_embedding_arr,
         Gamma_z_arr=Gamma_z_arr,
         Gamma_z_active_region_arr=Gamma_z_active_region_arr,
         d_optimum_arr=d_optimum_arr,
         Gamma_z_optimum_arr=Gamma_z_optimum_arr,
+        Gamma_z_active_region_optimum_arr=Gamma_z_active_region_optimum_arr,
         d_active_region=d_active_region,
     )
 

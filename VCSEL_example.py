@@ -18,7 +18,9 @@ Add ticks at the color bar for the refractive indices that are actually shown (r
 -Remove substrate/air layer WHENEVER calculating phase changes.
 -Move all coating and etching conciderations to the DBR demonstration. Only be concerned with their reflectivity change when it comes to the VCSEL demonstration.
 
+in photon lifetime analysis, a group velocity needs to be provided from the literature
 
+formulate dbr reflectivity over n_in, n_out as established in tuning paper
 """
 
 from matplotlib.pylab import norm
@@ -100,6 +102,8 @@ VCSEL = build_VCSEL_structure(
 
 plot_structure(VCSEL)
 plt.show()
+
+# calculate_electrical_field(VCSEL, target_wavelength)
 
 # %% Full Analysis
 

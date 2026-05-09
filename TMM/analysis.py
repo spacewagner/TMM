@@ -91,6 +91,8 @@ def analyse_electrical_field(
     # print(structure_field_properties_results.structure_interpolated)
 
     # TODO is this a valid approach for alpha_i?
+    # TODO for short cavities, the penetration into the DBRs has to be accounted when calculating cavity confinement
+
     integral_full_imaginary = np.sum(
         np.imag(structure_field_properties_results.n_field_arr)
         * np.abs(structure_field_properties_results.field_values_arr) ** 2
@@ -220,6 +222,22 @@ def analyse_AR_coating(
 
     if Plot:
         plt.plot(d_coating_arr * 1e9, R_arr)
+
+        norm = Normalize(vmin=1, vmax=n_arr.max())
+        C = np.vstack([n_arr, n_arr])
+        X, Y = np.meshgrid(d_coating_arr * 1e9, [np.min(R_arr), np.max(R_arr)])
+        pcm = plt.pcolormesh(
+            X,
+            Y,
+            C,
+            shading="auto",
+            cmap="viridis_r",
+            norm=norm,
+            alpha=0.3,
+            rasterized=True,
+        )
+        plt.colorbar(label="Refractive Index")
+
         plt.xlabel("Deposition Thickness (nm)")
         plt.ylabel("Reflectivity")
 
@@ -918,7 +936,7 @@ def analyse_DBR(
     DBR_r_at_target = DBR_optical_properties_result.R_arr[idx_target]
     DBR_phase_at_target = DBR_optical_properties_result.phase_arr[idx_target]
 
-    DBR_phase_gradient = [0]    #for some analysis I use just [target_wavelength] here
+    DBR_phase_gradient = [0]  # for some analysis I use just [target_wavelength] here
     DBR_phase_gradient_at_target = 0
     if len(wavelength_arr) > 1:
         DBR_phase_gradient = np.gradient(
@@ -1267,7 +1285,7 @@ def analyse_VCSELs_DBRs(
             * 1e6,
             linestyle=":",
             color="black",
-            label=f"l_eff = {DBR_Top_properties.L_penetration_michalzik*1e6:.2f}$\\mu m$ ",
+            label=f"l_eff = {DBR_Top_properties.L_penetration_michalzik*1e9:.1f} nm",
         )
         ax2.minorticks_on()
         ax2.grid(which="major", linestyle="-", linewidth=0.4)
@@ -1341,10 +1359,10 @@ def analyse_VCSELs_DBRs(
         )
         print(f"Top DBR stopband width: {DBR_Top_properties.stopband_width*1e9:.2f} nm")
         print(
-            f"Bottom DBR phase penetration depth: {DBR_Bottom_properties.L_penetration_phase*1e9:.1f} um"
+            f"Bottom DBR phase penetration depth: {DBR_Bottom_properties.L_penetration_michalzik*1e9:.1f} nm"
         )
         print(
-            f"Top DBR phase penetration depth: {DBR_Top_properties.L_penetration_phase*1e9:.1f} um"
+            f"Top DBR phase penetration depth: {DBR_Top_properties.L_penetration_michalzik*1e9:.1f} nm"
         )
         print(f"Effective cavity length: {L_eff*1e6:.3f} um")
         print(f"Mirror loss: {alpha_m*1e-2:.2f} /cm")
@@ -1661,6 +1679,7 @@ def analyse_VCSEL_lifetime_tuning(
     target_wavelength,
     n_coating=1.45,
     resolution=1e-9,
+    v_gr=8.8e7,
     alpha_i_arr=[0, 5e2, 10e2, 20e2],
     active_region=None,
     d_embedding=None,
@@ -1886,7 +1905,8 @@ def analyse_VCSEL_lifetime_tuning(
         )
         alpha_m_etch_arr.append(alpha_m_etch)
 
-        v_gr = const.c / n_effective_cavity
+        # v_gr = const.c / n_effective_cavity
+        # v_gr = 8.8e7  # approximation by Blokhin et. al.
         v_gr_etch_arr.append(v_gr)
 
         for i, alpha_i in enumerate(alpha_i_arr):
@@ -1923,7 +1943,8 @@ def analyse_VCSEL_lifetime_tuning(
         )
         alpha_m_coating_arr.append(alpha_m_coating)
 
-        v_gr = const.c / n_effective_cavity
+        # v_gr = const.c / n_effective_cavity
+        # v_gr = 8.8e7  # approximation by Blokhin et. al.
         v_gr_coating_arr.append(v_gr)
 
         for i, alpha_i in enumerate(alpha_i_arr):
