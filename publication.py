@@ -1,7 +1,6 @@
 # %%
 import matplotlib.pyplot as plt
 import numpy as np
-import locale
 from matplotlib.colors import Normalize
 
 from TMM.structure_builder import (
@@ -11,6 +10,7 @@ from TMM.structure_builder import (
     apply_AR_coating,
     build_active_region,
     VCSEL_embedding_active_region,
+    interpolate_structure,
 )
 
 from TMM.field_solver import calculate_optical_properties, calculate_electrical_field
@@ -30,52 +30,8 @@ from TMM.optics_utils import (
     refractive_index_Si3N4,
 )
 
-from TMM.optimizations import plot_VCSEL_embedding_sweep, optimize_embedding_thickness
+from TMM.optimizations import optimize_embedding_thickness
 
-# def apply_plot_style():
-#     plt.minorticks_on()
-#     plt.grid(which="major", linestyle="-", linewidth=0.4)
-#     plt.tick_params(direction="in", which="both", top=True, right=True)
-#     # plt.margins(x=0, y=0)
-#     plt.gcf().set_size_inches(8.5, 6)
-
-
-# def apply_latex_style_us(final_output=False):
-#     try:
-#         locale.setlocale(locale.LC_ALL, "en_US.UTF-8")
-#     except locale.Error:
-#         print("Warning: Could not set locale to 'en_US.UTF-8'.")
-
-#     plt.rcParams["text.usetex"] = final_output
-#     plt.rcParams["font.family"] = ["Latin Modern Roman"]
-
-#     if final_output:
-#         plt.rcParams["text.latex.preamble"] = (
-#             r"\usepackage["
-#             r"locale=US,"
-#             r"per-mode=symbol,"
-#             r"separate-uncertainty,"
-#             r"sticky-per,"
-#             r"group-digits=false,"
-#             r"detect-all"
-#             r"]{siunitx}"
-#             r"\usepackage[T1]{fontenc}"
-#             r"\usepackage{lmodern}"
-#             r"\usepackage{microtype}"
-#         )
-
-#     plt.rcParams["axes.formatter.use_locale"] = not final_output
-#     plt.rcParams["font.size"] = 14
-# apply_latex_style_us()
-
-# plt.style.use("style.mplstyle")
-
-# plt.rcParams["text.latex.preamble"] = [
-#     r"\usepackage[locale=US,per-mode=symbol,separate-uncertainty,sticky-per,group-digits=false,detect-all]{siunitx}",
-#     r"\usepackage[T1]{fontenc}",
-#     r"\usepackage{lmodern}",
-#     r"\usepackage{microtype}",
-# ]
 # %% Build the VCSEL Structure
 # structure approximated from Blokhin et. al.
 
@@ -113,16 +69,7 @@ with plt.style.context("style.mplstyle"):
     plt.show()
 
 wavelength_arr = np.arange(target_wavelength - 100e-9, target_wavelength + 100e-9, 1e-9)
-
-
-analyse_VCSELs_DBRs(VCSEL, target_wavelength, wavelength_arr)
-# %% Mirror Reflectivity
-
-"""
-
-Compare etching properties from TMM with analytical solution
-
-"""
+# %% Compare etching properties from TMM with analytical solution
 
 n1 = GaAs
 n2 = Al91Ga9As
@@ -197,6 +144,13 @@ plt.show()
 
 # %% Comparison Plot
 
+structure_interpolated = interpolate_structure(
+    build_DBR_structure(
+        n1, n2, 21.5, target_wavelength, n_substrate=n_substrate, n_air=n_air
+    )
+)
+structure_interpolated["n"] = structure_interpolated["n"]
+
 with plt.style.context("style.mplstyle"):
 
     plt.plot(DBR_etching_properties.N_arr, DBR_etching_properties.R_arr, label="TMM")
@@ -218,19 +172,56 @@ with plt.style.context("style.mplstyle"):
         color=f"C{1}",
     )
 
+    # plt.plot(
+    #     N_arr_odd[-5],
+    #     R_theory_odd[-5],
+    #     marker=".",
+    #     linestyle="",
+    #     # label="R(2N=odd)",
+    #     color=f"C{2}",
+    # )
+
+    # ax = plt.gca()
+    # ax_inset = ax.inset_axes([0.55, 0.35, 0.4, 0.3])
+
+    # ax_inset.plot(
+    #     -1 * structure_interpolated["position"]
+    #     + np.max(structure_interpolated["position"]) * 1e6,
+    #     structure_interpolated["n"],
+    #     label="$n(z)$ \n $N=21.5$",
+    #     color=f"C{2}",
+    # )
+    # ax_inset.grid(False)
+    # # ax_inset.tick_params(which = "both", top=False, right=False, bottom= True, left = True)
+    # ax_inset.set_xticklabels([])
+    # # ax_inset.set_yticklabels([])
+    # # ax_inset.set_xlabel(r"Long. coordinate ($\mu m$)")
+    # # ax_inset.set_ylabel("$n$")
+    # ax_inset.legend(loc="lower right")
+
+    # # --- annotations stay on ax1 ---
+    # arrowprops = dict(arrowstyle="->", connectionstyle="angle,angleA=0,angleB=90,rad=0")
+
+    # plt.annotate("", xytext=(21.5, 0.6), xy=(21.5, 0.99), arrowprops=arrowprops)
+
     # --- annotations stay on ax1 ---
     arrowprops = dict(arrowstyle="->", connectionstyle="angle,angleA=0,angleB=90,rad=0")
 
     plt.annotate(
-        "This work", xytext=(20.2, 0.85), xy=(21.5, 0.99), arrowprops=arrowprops
+        r"$N=21.5$",
+        xytext=(21.5, 0.85),
+        xy=(21.5, 0.99),
+        arrowprops=arrowprops,
+        ha="center",
+        va="center",
     )
 
-    plt.xlabel(r"Amount of mirror pairs $N$")
+    plt.xlabel(r"Number of mirror pairs $N$")
     plt.ylabel(r"Reflectance $R$")
     plt.legend()
     plt.ylim(0, 1)
     plt.xlim(0, 25.5)
-    plt.savefig("mirror_reflectivity_over_N.pdf", bbox_inches="tight", dpi=600)
+    plt.savefig("mirror_reflectivity_over_N.pdf", dpi=600)
     plt.show()
 # %%
 
@@ -303,15 +294,29 @@ with plt.style.context("style.mplstyle"):
     arrowprops = dict(arrowstyle="->", connectionstyle="angle,angleA=0,angleB=90,rad=0")
 
     plt.annotate(
-        "This work", xytext=(890, 0.07), xy=(1009.23125, 0.04), arrowprops=arrowprops
+        r"0.5$\lambda$",
+        xytext=(191.73125, 0.18331926 + 0.04),
+        xy=(191.73125, 0.18331926 + 0.005),
+        arrowprops=arrowprops,
+        ha="center",
+        va="bottom",
+    )
+
+    plt.annotate(
+        r"2.5$\lambda$",
+        xytext=(1009.23125, 0.03251929 + 0.04),
+        xy=(1009.23125, 0.03251929 + 0.005),
+        arrowprops=arrowprops,
+        ha="center",
+        va="bottom",
     )
 
     plt.xlim(0, 1200)
     plt.ylim(0, 0.25)
-    plt.xlabel("Cavity Length (nm)")
+    plt.xlabel("Cavity Length $L$ (nm)")
     plt.ylabel("Longitudinal Confinement $\\Gamma_{\\mathrm{z}}$")
     plt.legend()
-    plt.savefig("cavity_length_optimization.pdf", dpi=600, bbox_inches="tight")
+    plt.savefig("cavity_length_optimization.pdf", dpi=600)
     plt.show()
 
 # %% Build and plot VCSEL with active region
@@ -339,7 +344,7 @@ plt.plot(
 plt.legend()
 plt.xlabel("$Position~(\\mu m)$")
 plt.ylabel("Refractive index")
-
+plt.show()
 
 # %% embed the whole structure, including In(Al)GaAs TJ, p-InAlAs, In(Al)GaAs-SL, n-InGaAs (Blokhin)
 
@@ -437,18 +442,22 @@ with plt.style.context("style.mplstyle"):
 
     # --- annotations stay on ax1 ---
     arrowprops = dict(
-        arrowstyle="->", connectionstyle="angle,angleA=0,angleB=90,rad=0", linewidth=0.5
+        arrowstyle="->",
+        connectionstyle="angle,angleA=0,angleB=90,rad=0",
+        linewidth=0.5,
+        shrinkA=0,
+        shrinkB=0,
     )
 
     ax1.annotate(
-        "FL",
+        "FI",
         xytext=(4.5, 3.0),
         xy=(4.43407605882437, 3.2),
         arrowprops=arrowprops,
         fontsize=fontsize,
     )
     ax1.annotate(
-        "FL",
+        "FI",
         xytext=(5.29, 3.0),
         xy=(5.43942715257435, 3.2),
         arrowprops=arrowprops,
@@ -487,7 +496,7 @@ with plt.style.context("style.mplstyle"):
         "",
         xytext=(4, 3.466),
         xy=(4.43407605882437, 3.466),
-        arrowprops=dict(arrowstyle="<-", linewidth=0.5),
+        arrowprops=dict(arrowstyle="<-", linewidth=0.5, shrinkA=0, shrinkB=0),
         fontsize=fontsize,
     )
     ax1.text(
@@ -503,7 +512,7 @@ with plt.style.context("style.mplstyle"):
         "",
         xytext=(6, 3.466),
         xy=(5.43942715257435, 3.466),
-        arrowprops=dict(arrowstyle="<-", linewidth=0.5),
+        arrowprops=dict(arrowstyle="<-", linewidth=0.5, shrinkA=0, shrinkB=0),
         fontsize=fontsize,
     )
     ax1.text(
@@ -519,7 +528,7 @@ with plt.style.context("style.mplstyle"):
         "",
         xytext=(4.43407605882437, 3.58),
         xy=(4.82209168382437, 3.58),
-        arrowprops=dict(arrowstyle="<->", linewidth=0.5),
+        arrowprops=dict(arrowstyle="<->", linewidth=0.5, shrinkA=0, shrinkB=0),
         fontsize=fontsize,
     )
     ax1.text(4.63, 3.60, "Top n-InP IC", ha="center", va="bottom", fontsize=fontsize)
@@ -528,7 +537,7 @@ with plt.style.context("style.mplstyle"):
         "",
         xytext=(4.97725168382436, 3.58),
         xy=(5.43942715257435, 3.58),
-        arrowprops=dict(arrowstyle="<->", linewidth=0.5),
+        arrowprops=dict(arrowstyle="<->", linewidth=0.5, shrinkA=0, shrinkB=0),
         fontsize=fontsize,
     )
     ax1.text(5.21, 3.60, "Bottom n-InP IC", ha="center", va="bottom", fontsize=fontsize)
@@ -537,7 +546,7 @@ with plt.style.context("style.mplstyle"):
         "",
         xytext=(4.43407605882437, 3.75),
         xy=(5.43942715257435, 3.75),
-        arrowprops=dict(arrowstyle="<->", linewidth=0.5),
+        arrowprops=dict(arrowstyle="<->", linewidth=0.5, shrinkA=0, shrinkB=0),
         fontsize=fontsize,
     )
     ax1.text(
@@ -583,7 +592,7 @@ with plt.style.context("style.mplstyle"):
     # ax2.tick_params(
     #     direction="in", which="both", top=True, right=True, bottom=True, labelbottom=True
     # )
-    plt.savefig("1310_mode_profile.pdf", bbox_inches="tight", dpi=600)
+    plt.savefig("1310_mode_profile.pdf", dpi=600)
     plt.show()
 
 # %%
@@ -602,16 +611,21 @@ plt.show()
 # %%
 
 # TODO setze gruppengeschwindigkeit manuell, prüfe confinement faktor mit publikation 0.047
+
+# internal_loss_arr = [0, 250, 500, 750, 1000, 1250, 1500, 1750, 2000]
+internal_loss_arr = np.linspace(0, 2000, 50)
+# internal_loss_arr = [0, 500, 1000, 2000]
+
 VCSEL_cavity_tuning_properties = analyse_VCSEL_lifetime_tuning(
     VCSEL_passivated,
     target_wavelength,
     n_coating=refractive_index_SiO2(target_wavelength),
-    resolution=10e-9,
+    resolution=1e-9,
     Plot=True,
-    alpha_i_arr=[0, 500, 1000, 2000],
+    alpha_i_arr=internal_loss_arr,
 )
 
-plt.savefig("VCSEL_tuning_analysis.pdf", bbox_inches="tight", dpi=600)
+# plt.savefig("VCSEL_tuning_analysis.pdf", dpi=600)
 plt.show()
 VCSEL_cavity_tuning_properties.Gamma_z
 print(VCSEL_cavity_tuning_properties.v_gr_coating_arr.min())
@@ -620,7 +634,221 @@ print(VCSEL_cavity_tuning_properties.Gamma_z)
 print(VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[2])
 
 # %%
-from matplotlib.patches import Ellipse
+d_arr = np.concatenate(
+    [
+        np.flip(-1 * VCSEL_cavity_tuning_properties.d_etching_arr),
+        VCSEL_cavity_tuning_properties.d_coating_arr,
+    ]
+)
+
+R_arr = np.concatenate(
+    [
+        np.flip(VCSEL_cavity_tuning_properties.R_etching_arr),
+        VCSEL_cavity_tuning_properties.R_coating_arr,
+    ]
+)
+
+n_arr = np.concatenate(
+    [
+        np.flip(VCSEL_cavity_tuning_properties.n_etching_arr),
+        VCSEL_cavity_tuning_properties.n_coating_arr,
+    ]
+)
+
+alpha_m_arr = np.concatenate(
+    [
+        np.flip(VCSEL_cavity_tuning_properties.alpha_m_etch_arr),
+        VCSEL_cavity_tuning_properties.alpha_m_coating_arr,
+    ]
+)
+i = 1
+print(f"internal loss: {VCSEL_cavity_tuning_properties.alpha_i_arr[i]}")
+photon_lifetime_arr = np.concatenate(
+    [
+        np.flip(VCSEL_cavity_tuning_properties.photon_lifetime_etch_arr_arr[i]),
+        VCSEL_cavity_tuning_properties.photon_lifetime_coating_arr_arr[i],
+    ]
+)
+
+g_threshold_arr = np.concatenate(
+    [
+        np.flip(VCSEL_cavity_tuning_properties.g_threshold_etch_arr_arr[i]),
+        VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[i],
+    ]
+)
+
+n_unique_arr = np.unique(n_arr)
+d_mask = d_arr >= -600e-9
+d_arr_filtered = d_arr[d_mask]
+n_arr_filtered = n_arr[d_mask]
+R_arr_filtered = R_arr[d_mask]
+photon_lifetime_arr_filtered = photon_lifetime_arr[d_mask]
+alpha_m_arr_filtered = alpha_m_arr[d_mask]
+g_threshold_arr_filtered = g_threshold_arr[d_mask]
+
+for n_unique in n_unique_arr:
+    n_mask = n_arr_filtered == n_unique
+    d_arr_filtered_masked = d_arr_filtered[n_mask]
+    n_arr_filtered_masked = n_arr_filtered[n_mask]
+    R_arr_filtered_masked = R_arr_filtered[n_mask]
+    photon_lifetime_arr_filtered_masked = photon_lifetime_arr_filtered[n_mask]
+    alpha_m_arr_filtered_masked = alpha_m_arr_filtered[n_mask]
+    g_threshold_arr_filtered_masked = g_threshold_arr_filtered[n_mask]
+    plt.plot(n_arr_filtered_masked, R_arr_filtered_masked)
+
+    print("\n")
+
+    print(
+        f"{n_unique}, d for max={d_arr_filtered_masked[np.argmax(R_arr_filtered_masked)]}, d for min={d_arr_filtered_masked[np.argmin(R_arr_filtered_masked)]}, delta d = {np.abs(d_arr_filtered_masked[np.argmax(R_arr_filtered_masked)]-d_arr_filtered_masked[np.argmin(R_arr_filtered_masked)])}"
+    )
+
+    print(
+        f"{n_unique}, Rmax={np.max(R_arr_filtered_masked)}, Rmin={np.min(R_arr_filtered_masked)}, deltaR = {np.abs(np.max(R_arr_filtered_masked)-np.min(R_arr_filtered_masked))}"
+    )
+
+    print(
+        f"{n_unique}, tau_max={np.max(photon_lifetime_arr_filtered_masked)}, tau_min={np.min(photon_lifetime_arr_filtered_masked)}, delta_tau = {np.abs(np.max(photon_lifetime_arr_filtered_masked)-np.min(photon_lifetime_arr_filtered_masked))}"
+    )
+
+    print(
+        f"{n_unique}, alpha_m_max={np.max(alpha_m_arr_filtered_masked)}, alpha_m_min={np.min(alpha_m_arr_filtered_masked)}, delta_alpha_m = {np.abs(np.max(alpha_m_arr_filtered_masked)-np.min(alpha_m_arr_filtered_masked))}"
+    )
+
+    print(
+        f"{n_unique}, g_th_max={np.max(g_threshold_arr_filtered_masked)}, g_th_min={np.min(g_threshold_arr_filtered_masked)}, delta_g_th = {np.abs(np.max(g_threshold_arr_filtered_masked)-np.min(g_threshold_arr_filtered_masked))}"
+    )
+# %%
+d_roi_arr = [0, 120e-9]
+
+print(f"internal loss: {VCSEL_cavity_tuning_properties.alpha_i_arr[i]}")
+
+for d_roi in d_roi_arr:
+    n_unique_arr = np.unique(n_arr)
+    d_mask = d_arr == d_arr[np.argmin(np.abs(d_arr - d_roi))]
+    n_arr_filtered = n_arr[d_mask]
+    R_arr_filtered = R_arr[d_mask]
+    photon_lifetime_arr_filtered = photon_lifetime_arr[d_mask]
+    alpha_m_arr_filtered = alpha_m_arr[d_mask]
+    g_threshold_arr_filtered = g_threshold_arr[d_mask]
+
+    print("\n\n")
+    print(
+        f"Thickness: {d_roi} - Reflectance: {R_arr_filtered[0]} - Mirror Loss: {alpha_m_arr_filtered[0]} - Photon Lifetime: {photon_lifetime_arr_filtered[0]} - Threshold Gain: {g_threshold_arr_filtered[0]}"
+    )
+
+# %%
+import pandas as pd
+
+records = []
+
+for i, alpha_i in enumerate(internal_loss_arr):
+
+    photon_lifetime = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.photon_lifetime_etch_arr_arr[i]),
+            VCSEL_cavity_tuning_properties.photon_lifetime_coating_arr_arr[i],
+        ]
+    )
+
+    g_threshold = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.g_threshold_etch_arr_arr[i]),
+            VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[i],
+        ]
+    )
+
+    temp_df = pd.DataFrame(
+        {
+            "alpha_i": alpha_i,
+            "d": d_arr,
+            "n": n_arr,
+            "R": R_arr,
+            "tau_p": photon_lifetime,
+            "alpha_m": alpha_m_arr,
+            "g_th": g_threshold,
+        }
+    )
+
+    records.append(temp_df)
+
+df = pd.concat(records, ignore_index=True)
+# %%
+d_mask = d_arr == d_arr[np.argmin(np.abs(d_arr - d_roi))]
+
+d_roi_arr = [0, 39e-9, 120e-9, 2.65e-07]
+
+# cmap = plt.get_cmap("viridis")
+# norm = plt.Normalize(vmin=min(d_roi_arr), vmax=max(d_roi_arr))
+
+colors = [f"C{0}", f"C{2}", f"C{1}", f"C{3}"]
+
+with plt.style.context("style.mplstyle"):
+    fig, ax = plt.subplots()
+    for i, d_roi in enumerate(d_roi_arr):
+
+        # nearest available thickness
+        nearest_d = df.loc[(df["d"] - d_roi).abs().idxmin(), "d"]
+
+        df_roi = df[df["d"] == nearest_d]
+
+        if d_roi not in {0, 120e-9}:
+            linestyle = "--"
+        else:
+            linestyle = "-"
+
+        ax.plot(
+            df_roi["alpha_i"] * 1e-2,
+            df_roi["tau_p"] * 1e12,
+            label=f"{np.abs(nearest_d) * 1e9:.0f}$~$nm",
+            linestyle=linestyle,
+            color=colors[i],
+            # color=cmap(norm(d_roi))
+        )
+
+    d_roi = 39e-9
+    nearest_d = df.loc[(df["d"] - d_roi).abs().idxmin(), "d"]
+    df_roi_min = df[df["d"] == nearest_d]
+    d_roi = 265e-9
+    nearest_d = df.loc[(df["d"] - d_roi).abs().idxmin(), "d"]
+    df_roi_max = df[df["d"] == nearest_d]
+
+    plt.fill_between(
+        df_roi_min["alpha_i"] * 1e-2,
+        df_roi_min["tau_p"] * 1e12,
+        df_roi_max["tau_p"] * 1e12,
+        alpha=0.2,
+        color="grey",
+        #  label = "Intermediate"
+    )
+
+    # sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    # fig.colorbar(sm, ax=ax, label="Thickness Modification (nm)")
+
+    plt.xlabel(r"Internal Loss $\alpha_i$ (cm$^{-1}$)")
+    plt.ylabel(r"Photon Lifetime $\tau_p$ (ps)")
+    plt.xlim(0, 20)
+    plt.ylim(0, 12)
+    plt.legend()
+    plt.savefig("photon_lifetime_over_internal_loss.pdf", dpi=600)
+    plt.show()
+
+# %%
+internal_loss_arr = [0, 500, 1000, 2000]
+
+VCSEL_cavity_tuning_properties = analyse_VCSEL_lifetime_tuning(
+    VCSEL_passivated,
+    target_wavelength,
+    n_coating=refractive_index_SiO2(target_wavelength),
+    resolution=1e-9,
+    Plot=True,
+    alpha_i_arr=internal_loss_arr,
+)
+
+# plt.savefig("VCSEL_tuning_analysis.pdf", dpi=600)
+plt.show()
+# %% with inset
+
+from matplotlib.ticker import MultipleLocator
 
 
 def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="pdf"):
@@ -652,7 +880,29 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
         ax1 = plt.subplot(2, 1, 1)  # Span column 1 of row 1
 
         ax1.plot(d_arr * 1e9, R_arr, color="black")
-        ax1.axvline(0, color="tab:red")
+
+        # ax_inset = ax1.inset_axes([1 - 0.3375, 0.45, 0.3, 0.3])
+
+        # for d_roi in d_roi_arr:
+
+        #     # nearest available thickness
+        #     nearest_d = df.loc[(df["d"] - d_roi).abs().idxmin(), "d"]
+
+        #     df_roi = df[df["d"] == nearest_d]
+
+        #     ax_inset.plot(
+        #         df_roi["alpha_i"] * 1e-2,
+        #         df_roi["tau_p"] * 1e12,
+        #         label=f"{np.abs(nearest_d) * 1e9:.0f}$~$nm",
+        #     )
+
+        # ax_inset.text(6, 4, "0 nm", ha="center", va="center", color=f"C{0}")
+        # ax_inset.text(6, 6.5, "120 nm", ha="center", va="center", color=f"C{1}")
+
+        # ax_inset.set_xlabel(r"$\alpha_i$ (cm$^{-1}$)")
+        # ax_inset.set_ylabel(r"$\tau_p$ (ps)")
+        # ax_inset.set_xlim(0, 20)
+        # ax_inset.set_ylim(2.5, 7.5)
 
         ax2 = ax1.twinx()
         ax2.grid(False)
@@ -683,7 +933,6 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
             ]
         )
         ax3.plot(d_arr * 1e9, alpha_m_arr * 1e-2, color="black")
-        ax3.axvline(0, color="tab:red")
 
         ax4 = ax3.twinx()
         ax4.grid(False)
@@ -703,6 +952,11 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
                 color=f"C{i}",
             )
 
+        ax1.axvline(0, color="black", linestyle=":")
+        ax3.axvline(0, color="black", linestyle=":")
+        ax1.axvline(120, linestyle=":", color=f"C{3}")
+        ax3.axvline(120, linestyle=":", color=f"C{3}")
+
         # norm = Normalize(vmin=n_arr.min(), vmax=n_arr.max())
         norm = Normalize(vmin=1, vmax=n_arr.max())
         C = np.vstack([n_arr, n_arr])
@@ -719,6 +973,19 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
             alpha=0.3,
             rasterized=True,
         )
+
+        # # inset
+        # X, Y = np.meshgrid(d_arr * 1e9, [2.5, 7.5])
+        # pcm = ax_inset.pcolormesh(
+        #     X,
+        #     Y,
+        #     C,
+        #     shading="auto",
+        #     cmap="viridis_r",
+        #     norm=norm,
+        #     alpha=0.3,
+        #     rasterized=True,
+        # )
 
         # ax2
         X, Y = np.meshgrid(
@@ -795,33 +1062,57 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
 
         ax3.text(
             225,
-            65,
-            "SiO$_2$ \n Coating",
+            70,
+            "SiO$_2$ \n $n=1.45$",
             ha="center",
-            va="bottom",
+            va="center",
         )
         ax3.text(
             -235,
-            65,
-            "Si$_3$N$_4$ \n Passivation",
+            70,
+            "Si$\\textsubscript{x}$N$\\textsubscript{y}$ \n $n=2.00$",
             ha="center",
-            va="bottom",
+            va="center",
         )
+        # ax3.text(
+        #     -580,
+        #     70,
+        #     "Top DBR",
+        #     ha="center",
+        #     va="center",
+        # )
+
         ax3.text(
-            -668,
-            65,
-            "AlGaAs/GaAs \n Top DBR",
+            -575,
+            70,
+            "AlGaAs \n $n=2.96$",
+            ha="right",
+            va="center",
+        )
+
+        ax3.text(
+            -550,
+            70,
+            "GaAs \n $n=3.41$",
+            ha="left",
+            va="center",
+        )
+
+        ax1.text(
+            19,
+            1.002,
+            "Etching $\\leftarrow \\rightarrow$ Deposition",
             ha="center",
-            va="bottom",
+            va="center",
         )
 
         ax2.set_ylabel(r"Photon lifetime $\tau_{\mathrm{ph}}$ (ps)")
-        ax1.set_ylabel(r"Reflectance $R$")
+        ax1.set_ylabel(r"Top DBR Reflectance $R$")
         ax4.set_ylabel(r"Threshold gain $g_{\mathrm{th}}$ (cm$^{-1}$)")
         ax3.set_ylabel(r"Mirror loss $\alpha_\mathrm{m}$ (cm$^{-1}$)")
-        ax3.set_xlabel(r"Thickness (nm)")
+        ax3.set_xlabel("Thickness Modification (nm)")
 
-        # ax1.minorticks_on()
+        ax1.minorticks_on()
         # ax2.minorticks_on()
         # ax3.minorticks_on()
         # ax4.minorticks_on()
@@ -845,7 +1136,7 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
         ax2.set_ylim(0, 25)
         ax1.set_xlim(xmax=450)
         ax3.set_xlim(xmax=450)
-
+        ax1.yaxis.set_major_locator(MultipleLocator(0.01))
         # Get all handles and labels
         handles3, labels3 = ax3.get_legend_handles_labels()
         handles4, labels4 = ax4.get_legend_handles_labels()
@@ -859,13 +1150,391 @@ def plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties, Save_to="
             all_handles,
             all_labels,
             loc="center",
-            bbox_to_anchor=(0.51, 0.495),  # x,y in figure coordinates
+            bbox_to_anchor=(0.513, 0.4945),  # x,y in figure coordinates
             ncol=4,
             frameon=True,
         )
 
 
 plot_analyse_VCSEL_lifetime_tuning(VCSEL_cavity_tuning_properties)
-plt.savefig("VCSEL_tuning_analysis.pdf", bbox_inches="tight", dpi=600)
+plt.savefig("VCSEL_tuning_analysis.pdf", dpi=600)
 plt.show()
+# %% plot of tau over peak order and internal loss
+
+peak_order_arr = [
+    0,
+    1,
+    2,
+    3,
+    4,
+]  # depending on the evaluated embedding range, it corresponds to long. mode order -1
+
+for peak_order in peak_order_arr:
+
+    VCSEL_modified = VCSEL_embedding_active_region(
+        VCSEL, active_region, results.d_optimum_arr[peak_order]
+    )
+
+    # consistency check
+    delta_d = d_embedding_full - d_active_region
+    d_optimum = results.d_optimum_arr[peak_order] - delta_d
+
+    VCSEL_modified2 = VCSEL_embedding_active_region(VCSEL, embedding_full, d_optimum)
+
+    VCSEL_passivated = apply_AR_coating(
+        VCSEL_modified2, refractive_index_Si3N4(1310e-9), 470e-9
+    )
+
+    # internal_loss_arr = np.linspace(0, 2000, 100)
+    internal_loss_arr = [0, 500, 1000, 2000]
+
+    VCSEL_cavity_tuning_properties = analyse_VCSEL_lifetime_tuning(
+        VCSEL_passivated,
+        target_wavelength,
+        n_coating=refractive_index_SiO2(target_wavelength),
+        resolution=10e-9,
+        Plot=True,
+        alpha_i_arr=internal_loss_arr,
+    )
+
+    # plt.savefig("VCSEL_tuning_analysis.pdf", dpi=600)
+    plt.show()
+    VCSEL_cavity_tuning_properties.Gamma_z
+
+    d_arr = np.concatenate(
+        [
+            np.flip(-1 * VCSEL_cavity_tuning_properties.d_etching_arr),
+            VCSEL_cavity_tuning_properties.d_coating_arr,
+        ]
+    )
+
+    R_arr = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.R_etching_arr),
+            VCSEL_cavity_tuning_properties.R_coating_arr,
+        ]
+    )
+
+    n_arr = np.concatenate(
+        [
+            np.flip(VCSEL_cavity_tuning_properties.n_etching_arr),
+            VCSEL_cavity_tuning_properties.n_coating_arr,
+        ]
+    )
+
+    records = []
+
+    for i, alpha_i in enumerate(internal_loss_arr):
+
+        photon_lifetime = np.concatenate(
+            [
+                np.flip(VCSEL_cavity_tuning_properties.photon_lifetime_etch_arr_arr[i]),
+                VCSEL_cavity_tuning_properties.photon_lifetime_coating_arr_arr[i],
+            ]
+        )
+
+        g_threshold = np.concatenate(
+            [
+                np.flip(VCSEL_cavity_tuning_properties.g_threshold_etch_arr_arr[i]),
+                VCSEL_cavity_tuning_properties.g_threshold_coating_arr_arr[i],
+            ]
+        )
+
+        temp_df = pd.DataFrame(
+            {
+                "alpha_i": alpha_i,
+                "d": d_arr,
+                "n": n_arr,
+                "R": R_arr,
+                "tau_p": photon_lifetime,
+                "alpha_m": alpha_m_arr,
+                "g_th": g_threshold,
+            }
+        )
+
+        records.append(temp_df)
+
+    df = pd.concat(records, ignore_index=True)
+
+    d_roi_arr = [0, 120e-9]
+
+    with plt.style.context("style.mplstyle"):
+        fig, ax = plt.subplots()
+        for d_roi in d_roi_arr:
+
+            # nearest available thickness
+            nearest_d = df.loc[(df["d"] - d_roi).abs().idxmin(), "d"]
+
+            df_roi = df[df["d"] == nearest_d]
+
+            ax.plot(
+                df_roi["alpha_i"] * 1e-2,
+                df_roi["tau_p"] * 1e12,
+                label=f"{np.abs(nearest_d) * 1e9:.0f}$~$nm",
+            )
+
+    plt.xlabel(r"Internal Loss $\alpha_i$ (cm$^{-1}$)")
+    plt.ylabel(r"Photon Lifetime $\tau_p$ (ps)")
+    plt.xlim(0, 30)
+    plt.ylim(0, 8)
+    plt.legend()
+    plt.show()
+# %%
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ============================================================
+# Parameters
+# ============================================================
+
+peak_order_arr = [0, 1, 2, 3, 4]
+internal_loss_arr = [0, 500, 1000, 2000]
+d_roi_arr = [0, 120e-9]
+
+all_records = []
+
+
+# ============================================================
+# Main simulation loop
+# ============================================================
+
+for peak_order in peak_order_arr:
+
+    # --------------------------------------------------------
+    # Build VCSEL structure
+    # --------------------------------------------------------
+
+    VCSEL_modified = VCSEL_embedding_active_region(
+        VCSEL,
+        active_region,
+        results.d_optimum_arr[peak_order],
+    )
+
+    delta_d = d_embedding_full - d_active_region
+    d_optimum = results.d_optimum_arr[peak_order] - delta_d
+
+    VCSEL_modified = VCSEL_embedding_active_region(
+        VCSEL,
+        embedding_full,
+        d_optimum,
+    )
+
+    VCSEL_passivated = apply_AR_coating(
+        VCSEL_modified,
+        refractive_index_Si3N4(1310e-9),
+        470e-9,
+    )
+
+    # --------------------------------------------------------
+    # Run simulation
+    # --------------------------------------------------------
+
+    tuning = analyse_VCSEL_lifetime_tuning(
+        VCSEL_passivated,
+        target_wavelength,
+        n_coating=refractive_index_SiO2(target_wavelength),
+        resolution=10e-9,
+        Plot=True,
+        alpha_i_arr=internal_loss_arr,
+    )
+
+    plt.show()
+
+    # --------------------------------------------------------
+    # Common arrays
+    # --------------------------------------------------------
+
+    d_arr = np.concatenate(
+        [
+            np.flip(-1 * tuning.d_etching_arr),
+            tuning.d_coating_arr,
+        ]
+    )
+
+    R_arr = np.concatenate(
+        [
+            np.flip(tuning.R_etching_arr),
+            tuning.R_coating_arr,
+        ]
+    )
+
+    n_arr = np.concatenate(
+        [
+            np.flip(tuning.n_etching_arr),
+            tuning.n_coating_arr,
+        ]
+    )
+
+    alpha_m_arr_full = np.concatenate(
+        [
+            np.flip(tuning.alpha_m_etch_arr),
+            tuning.alpha_m_coating_arr,
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Internal loss loop
+    # --------------------------------------------------------
+
+    for i, alpha_i in enumerate(internal_loss_arr):
+
+        tau_p_arr = np.concatenate(
+            [
+                np.flip(tuning.photon_lifetime_etch_arr_arr[i]),
+                tuning.photon_lifetime_coating_arr_arr[i],
+            ]
+        )
+
+        g_th_arr = np.concatenate(
+            [
+                np.flip(tuning.g_threshold_etch_arr_arr[i]),
+                tuning.g_threshold_coating_arr_arr[i],
+            ]
+        )
+
+        df_temp = pd.DataFrame(
+            {
+                "peak_order": peak_order,
+                "alpha_i": alpha_i,
+                "d": d_arr,
+                "n": n_arr,
+                "R": R_arr,
+                "alpha_m": alpha_m_arr_full,
+                "tau_p": tau_p_arr,
+                "g_th": g_th_arr,
+            }
+        )
+
+        all_records.append(df_temp)
+
+
+# ============================================================
+# Final master dataframe
+# ============================================================
+
+df = pd.concat(all_records, ignore_index=True)
+
+print(df.head())
+# %%
+with plt.style.context("style.mplstyle"):
+
+    for peak_order in peak_order_arr:
+
+        fig, ax = plt.subplots()
+
+        df_peak = df[df["peak_order"] == peak_order]
+
+        for d_roi in d_roi_arr:
+
+            nearest_d = df_peak.loc[(df_peak["d"] - d_roi).abs().idxmin(), "d"]
+
+            df_roi = df_peak[df_peak["d"] == nearest_d]
+
+            ax.plot(
+                df_roi["alpha_i"] * 1e-2,
+                df_roi["tau_p"] * 1e12,
+                label=f"{abs(nearest_d)*1e9:.0f} nm",
+            )
+
+        ax.set(
+            xlabel=r"Internal Loss $\alpha_i$ (cm$^{-1}$)",
+            ylabel=r"Photon Lifetime $\tau_p$ (ps)",
+            xlim=(0, 30),
+            ylim=(0, 8),
+        )
+
+        ax.set_title(f"Peak Order {peak_order}")
+        ax.legend()
+
+        plt.show()
+# %%
+d_roi = 0e-9
+
+# ------------------------------------------------------------
+# Extract nearest d
+# ------------------------------------------------------------
+
+nearest_d = df.loc[
+    (df["d"] - d_roi).abs().idxmin(),
+    "d",
+]
+
+df_roi = df[df["d"] == nearest_d].copy()
+
+# Unit conversions
+df_roi["alpha_i_cm"] = df_roi["alpha_i"] * 1e-2
+df_roi["tau_p_ps"] = df_roi["tau_p"] * 1e12
+
+# ------------------------------------------------------------
+# Pivot into 2D grid
+# ------------------------------------------------------------
+
+pivot = df_roi.pivot_table(
+    index="peak_order",
+    columns="alpha_i_cm",
+    values="tau_p_ps",
+)
+
+X, Y = np.meshgrid(
+    pivot.columns.values,
+    pivot.index.values,
+)
+
+Z = pivot.values
+
+from mpl_toolkits.mplot3d import Axes3D
+
+with plt.style.context("style.mplstyle"):
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    surf = ax.plot_surface(
+        X,
+        Y,
+        Z,
+        cmap="viridis",
+        edgecolor="k",
+        linewidth=0.3,
+        alpha=0.9,
+    )
+
+    ax.set_xlabel(r"Internal Loss $\alpha_i$ (cm$^{-1}$)")
+    ax.set_ylabel("Peak Order")
+    ax.set_zlabel(r"Photon Lifetime $\tau_p$ (ps)")
+
+    fig.colorbar(
+        surf,
+        shrink=0.7,
+        label=r"$\tau_p$ (ps)",
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+with plt.style.context("style.mplstyle"):
+
+    fig, ax = plt.subplots()
+
+    contour = ax.contourf(
+        X,
+        Y + 1,
+        Z,
+        levels=100,
+        cmap="viridis",
+    )
+
+    cbar = fig.colorbar(
+        contour,
+        ax=ax,
+        label=r"Photon Lifetime $\tau_p$ (ps)",
+    )
+
+    ax.set_xlabel(r"Internal Loss $\alpha_i$ (cm$^{-1}$)")
+    ax.set_ylabel("Mode Order")
+
+    plt.title(f"Photon Lifetime at d = {np.abs(nearest_d)*1e9:.0f} nm")
+    plt.tight_layout()
+    plt.show()
 # %%

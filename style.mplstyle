@@ -10,8 +10,10 @@ figure.dpi: 300
 
 # Lines
 lines.linewidth: 1
-lines.markersize: 4
+lines.markersize: 6
+lines.markerstyle: o
 lines.linestyle: -
+markers.fillstyle: none
 
 # Grid
 axes.grid: True
